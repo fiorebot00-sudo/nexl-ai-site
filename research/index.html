@@ -1,3 +1,77 @@
-<!DOCTYPE html><html><head><meta charset="UTF-8"><title>NexL - research</title>
-<style>body{font-family:Arial,sans-serif;max-width:680px;margin:40px auto;padding:0 20px;} a{color:#e63946;} h1{border-bottom:3px solid #e63946;padding-bottom:10px;}</style>
-</head><body><h1>⚡ NexL / research</h1><p><a href="/">← Back</a></p><p>Reports will appear here after each run.</p></body></html>
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Research — NexL Research</title>
+<style>
+  :root {
+    --ink: #1a1a1a; --muted: #666; --line: #e5e5e5;
+    --bg: #fafafa; --card: #ffffff; --accent: #8b1a2b;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; background: var(--bg); color: var(--ink);
+    font-family: system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+    font-size: 17px; line-height: 1.6;
+    -webkit-font-smoothing: antialiased;
+  }
+  .wrap { max-width: 720px; margin: 0 auto; padding: 56px 24px 80px; }
+
+  .mast { display: flex; align-items: center; gap: 14px; padding-bottom: 28px; border-bottom: 1px solid var(--line); margin-bottom: 28px; }
+  .mast a { text-decoration: none; color: inherit; display: flex; align-items: center; gap: 14px; }
+  .mark { width: 36px; height: 36px; border-radius: 50%; background: var(--accent); color: #fff; display: grid; place-items: center; font-size: 18px; font-weight: 600; }
+  .mast-meta .name { font-weight: 600; font-size: 14px; letter-spacing: 0.02em; }
+  .mast-meta .by { color: var(--muted); font-size: 12px; }
+
+  .crumbs { font-size: 13px; color: var(--muted); margin: 0 0 8px; }
+  .crumbs a { color: var(--accent); text-decoration: none; }
+
+  h1 {
+    font-family: Charter, 'Bitstream Charter', 'Iowan Old Style', Cambria, Georgia, serif;
+    font-size: 36px; line-height: 1.15; font-weight: 600;
+    letter-spacing: -0.015em;
+    margin: 8px 0 12px;
+  }
+  .lede { font-size: 17px; color: var(--muted); margin: 0 0 36px; line-height: 1.5; }
+  .empty { color: var(--muted); font-style: italic; padding: 28px 0; border-top: 1px solid var(--line); }
+
+  footer {
+    margin-top: 80px; padding-top: 24px;
+    border-top: 1px solid var(--line);
+    font-size: 13px; color: var(--muted);
+  }
+  footer a { color: var(--accent); text-decoration: none; }
+
+  @media (max-width: 600px) {
+    .wrap { padding: 36px 20px 60px; }
+    h1 { font-size: 28px; }
+  }
+</style>
+</head>
+<body>
+<div class="wrap">
+
+  <header class="mast">
+    <a href="/">
+      <div class="mark">N</div>
+      <div class="mast-meta">
+        <div class="name">NexL Research</div>
+        <div class="by">by Mike Fiore</div>
+      </div>
+    </a>
+  </header>
+
+  <p class="crumbs"><a href="/">← Home</a></p>
+  <h1>Research</h1>
+  <p class="lede">Long-form papers on industrial sub-sectors — automotive, aerospace &amp; defense, chemicals, engineering &amp; construction, and diversified manufacturing. Deep dives on M&amp;A theses, value-pool maps, and structural shifts.</p>
+
+  <p class="empty">Papers will appear here as they're published.</p>
+
+  <footer>
+    Mike Fiore · NexL Research · <a href="https://nexl-ai.net">nexl-ai.net</a>
+  </footer>
+
+</div>
+</body>
+</html>
