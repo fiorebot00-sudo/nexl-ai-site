@@ -3,26 +3,157 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>⚡ NexL Research</title>
+<title>NexL Research — Industrial Products M&amp;A intelligence</title>
+<meta name="description" content="Industrial Products M&A intelligence by Mike Fiore. Competitor thought-leadership scans, morning briefs, and long-form research.">
 <style>
-  body { font-family: Arial, sans-serif; max-width: 680px; margin: 40px auto; padding: 0 20px; color: #333; }
-  h1 { border-bottom: 3px solid #e63946; padding-bottom: 10px; }
-  h2 { color: #e63946; text-transform: uppercase; border-left: 3px solid #e63946; padding-left: 8px; }
-  a { color: #e63946; }
-  .subtitle { font-size: 12px; color: #888; }
-  footer { margin-top: 40px; font-size: 11px; color: #aaa; border-top: 1px solid #eee; padding-top: 10px; }
+  :root {
+    --ink: #1a1a1a;
+    --muted: #666;
+    --line: #e5e5e5;
+    --bg: #fafafa;
+    --card: #ffffff;
+    --accent: #8b1a2b;
+  }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; padding: 0; }
+  body {
+    background: var(--bg);
+    color: var(--ink);
+    font-family: system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+    font-size: 17px;
+    line-height: 1.6;
+    -webkit-font-smoothing: antialiased;
+  }
+  .wrap { max-width: 720px; margin: 0 auto; padding: 56px 24px 80px; }
+  .serif { font-family: Charter, 'Bitstream Charter', 'Iowan Old Style', Cambria, Georgia, serif; }
+
+  /* Masthead */
+  .mast { display: flex; align-items: center; gap: 14px; padding-bottom: 32px; border-bottom: 1px solid var(--line); }
+  .mark {
+    width: 44px; height: 44px; border-radius: 50%;
+    background: var(--accent); color: #fff;
+    display: grid; place-items: center;
+    font-size: 22px; font-weight: 600;
+    letter-spacing: -0.02em;
+  }
+  .mast-meta { line-height: 1.25; }
+  .mast-meta .name { font-weight: 600; font-size: 15px; letter-spacing: 0.02em; }
+  .mast-meta .by { color: var(--muted); font-size: 13px; }
+
+  /* Hero */
+  h1 {
+    font-family: Charter, 'Bitstream Charter', 'Iowan Old Style', Cambria, Georgia, serif;
+    font-size: 40px; line-height: 1.15; font-weight: 600;
+    letter-spacing: -0.015em;
+    margin: 40px 0 12px;
+  }
+  .hero-sub {
+    font-size: 18px; color: var(--muted); margin: 0 0 40px;
+    line-height: 1.5;
+  }
+
+  /* Featured */
+  .feat {
+    background: var(--card);
+    border: 1px solid var(--line);
+    border-left: 3px solid var(--accent);
+    padding: 18px 22px;
+    margin: 0 0 56px;
+    display: block; text-decoration: none; color: inherit;
+    transition: border-color 120ms ease;
+  }
+  .feat:hover { border-color: var(--ink); border-left-color: var(--accent); }
+  .feat .label {
+    font-size: 11px; letter-spacing: 0.12em; text-transform: uppercase;
+    color: var(--accent); font-weight: 600; margin-bottom: 6px;
+  }
+  .feat .title {
+    font-family: Charter, 'Bitstream Charter', 'Iowan Old Style', Cambria, Georgia, serif;
+    font-size: 22px; line-height: 1.3; font-weight: 600;
+  }
+  .feat .meta {
+    font-size: 13px; color: var(--muted); margin-top: 6px;
+  }
+
+  /* Section cards */
+  .sections { display: grid; gap: 16px; }
+  .card {
+    background: var(--card);
+    border: 1px solid var(--line);
+    padding: 22px 24px;
+    text-decoration: none; color: inherit;
+    transition: border-color 120ms ease;
+  }
+  .card:hover { border-color: var(--ink); }
+  .card h2 {
+    font-family: Charter, 'Bitstream Charter', 'Iowan Old Style', Cambria, Georgia, serif;
+    font-size: 22px; line-height: 1.25; font-weight: 600;
+    margin: 0 0 6px; color: var(--ink);
+  }
+  .card p { margin: 6px 0 12px; color: var(--muted); font-size: 15px; line-height: 1.55; }
+  .card .row {
+    display: flex; justify-content: space-between; align-items: baseline;
+    font-size: 13px; color: var(--muted);
+    border-top: 1px solid var(--line); padding-top: 12px;
+  }
+  .card .row .arrow { color: var(--accent); font-weight: 500; }
+
+  /* Footer */
+  footer {
+    margin-top: 80px; padding-top: 24px;
+    border-top: 1px solid var(--line);
+    font-size: 13px; color: var(--muted);
+  }
+
+  @media (max-width: 600px) {
+    .wrap { padding: 36px 20px 60px; }
+    h1 { font-size: 32px; }
+    .hero-sub { font-size: 16px; }
+  }
 </style>
 </head>
 <body>
-  <img src="avatar.jpg" style="width:60px;height:60px;border-radius:50%;display:block;margin-bottom:8px;">
-  <h1>⚡ NexL Research</h1>
-  <p class="subtitle">Industrial Products M&A · Competitor Intelligence · Markets</p>
-  <h2>Competitor TL Monitor</h2>
-  <ul id="tl-list"><li><a href="tl/">View reports →</a></li></ul>
-  <h2>Morning Brief Archive</h2>
-  <ul><li><a href="brief/">View briefs →</a></li></ul>
-  <h2>Research</h2>
-  <ul><li><a href="research/">View research →</a></li></ul>
-  <footer>⚡ NexL · nexl-ai.net</footer>
+<div class="wrap">
+
+  <header class="mast">
+    <div class="mark">N</div>
+    <div class="mast-meta">
+      <div class="name">NexL Research</div>
+      <div class="by">by Mike Fiore</div>
+    </div>
+  </header>
+
+  <h1>Industrial Products M&amp;A intelligence.</h1>
+  <p class="hero-sub">Competitor thought-leadership scans, daily briefs, and long-form research on automotive, aerospace &amp; defense, chemicals, engineering &amp; construction, and diversified industrial manufacturing.</p>
+
+  <a class="feat" href="tl/2026-04-20.html">
+    <div class="label">Latest report</div>
+    <div class="title">Competitor TL Monitor — Week of April 20, 2026</div>
+    <div class="meta">10 firms · 27 pieces scored · physical-AI &amp; auto supply chain themes</div>
+  </a>
+
+  <div class="sections">
+    <a class="card" href="tl/">
+      <h2>Competitor TL Monitor</h2>
+      <p>Weekly scan of how peer firms — BCG, McKinsey, KPMG, Deloitte, EY, Bain, Kearney, AlixPartners, A&amp;M — are publishing on industrial M&amp;A topics. Scored, ranked, summarized.</p>
+      <div class="row"><span>Latest: Apr 20, 2026</span><span class="arrow">View archive →</span></div>
+    </a>
+    <a class="card" href="brief/">
+      <h2>Morning Brief</h2>
+      <p>Daily industrial-products M&amp;A intelligence brief. Deal flow, sector signals, quick-read.</p>
+      <div class="row"><span>Coming soon</span><span class="arrow">View archive →</span></div>
+    </a>
+    <a class="card" href="research/">
+      <h2>Research</h2>
+      <p>Long-form papers on industrial sub-sectors — auto, A&amp;D, chemicals, E&amp;C, diversified manufacturing.</p>
+      <div class="row"><span>Coming soon</span><span class="arrow">View archive →</span></div>
+    </a>
+  </div>
+
+  <footer>
+    Mike Fiore · NexL Research · <a href="https://nexl-ai.net" style="color:var(--accent);text-decoration:none;">nexl-ai.net</a>
+  </footer>
+
+</div>
 </body>
 </html>
