@@ -2694,7 +2694,7 @@ function draw() {
     ctx.fillText('GRAVITY ASSIST', VW / 2, y); y += 30;
     ctx.fillStyle = '#8fa2c8';
     ctx.font = '600 16px Oxanium, -apple-system, sans-serif';
-    ctx.fillText('one fling. slingshot the stars. escape.', VW / 2, y); y += 48;
+    ctx.fillText('one fling. slingshot the stars. escape.', VW / 2, y);
     const rows = [
       ['DRAG & RELEASE', 'anywhere to aim — the line shows your path,', 'longer drag = more power'],
       ['REACH THE WORMHOLE', 'thread the spiral gate to escape the system', ''],
@@ -2703,22 +2703,25 @@ function draw() {
       ['DODGE MOONS', 'grey moons orbit non-stop — time your gap', ''],
       ['5 SHIPS PER RUN', 'crash and retry the same system;', 'your last path stays as a guide'],
     ];
+    // even reading rhythm: section heads spaced evenly between header and footer
     ctx.textAlign = 'left';
-    const lx = 40;
-    for (const [head, l1, l2] of rows) {
+    const lx = 40, headTop = cy - 186, headBot = cy + 158;
+    const step = (headBot - headTop) / (rows.length - 1);
+    rows.forEach(([head, l1, l2], i) => {
+      let ry = headTop + i * step;
       ctx.fillStyle = '#ffd166';
       ctx.font = '700 18px Oxanium, -apple-system, sans-serif';
-      ctx.fillText(head, lx, y); y += 23;
+      ctx.fillText(head, lx, ry); ry += 23;
       ctx.fillStyle = '#cdd8ee';
       ctx.font = '600 15px Oxanium, -apple-system, sans-serif';
-      ctx.fillText(l1, lx, y); y += l2 ? 20 : 28;
-      if (l2) { ctx.fillText(l2, lx, y); y += 28; }
-    }
+      ctx.fillText(l1, lx, ry); ry += 20;
+      if (l2) ctx.fillText(l2, lx, ry);
+    });
     ctx.textAlign = 'center';
     ctx.globalAlpha = 0.5 + 0.35 * Math.sin(now * 4);
     ctx.fillStyle = '#e8f0ff';
     ctx.font = '700 19px Oxanium, -apple-system, sans-serif';
-    ctx.fillText('tap to launch', VW / 2, cy + 268);
+    ctx.fillText('tap to launch', VW / 2, cy + 262);
     ctx.globalAlpha = 1;
   }
 
