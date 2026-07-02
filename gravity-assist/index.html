@@ -859,7 +859,9 @@ function escapeGate() {
 canvas.addEventListener('pointerdown', e => {
   e.preventDefault();
   audio();                                    // unlock iOS audio on first gesture
-  if (game.state === 'aim') {
+  if (game.state === 'intro') {
+    game.state = 'aim';                       // dismiss the how-to-play, start flinging
+  } else if (game.state === 'aim') {
     game.drag = { sx: e.clientX, sy: e.clientY, cx: e.clientX, cy: e.clientY };
   } else if (game.state === 'splash' && performance.now() - game.splashAt > 300) {
     game.state = 'aim';
@@ -2175,6 +2177,34 @@ function drawGround(biome, now) {
 }
 
 // ---------- draw ----------
+// ---------- splash / overlay furniture (D-adr-024) ----------
+// Every splash dims the play behind it (readability) and sits on a faint tinted
+// panel with a soft border — the visual signal to STOP and read, tap to continue.
+function dimScreen(a) {
+  ctx.save();
+  ctx.setTransform(1, 0, 0, 1, 0, 0);
+  ctx.fillStyle = 'rgba(4,5,10,' + (0.74 * a).toFixed(3) + ')';
+  ctx.fillRect(0, 0, canvas.width, canvas.height);
+  ctx.restore();
+}
+function panelBox(cx, cy, w, h, a) {
+  const x = cx - w / 2, y = cy - h / 2, r = 16;
+  ctx.globalAlpha = a;
+  ctx.beginPath();
+  ctx.moveTo(x + r, y);
+  ctx.arcTo(x + w, y, x + w, y + h, r);
+  ctx.arcTo(x + w, y + h, x, y + h, r);
+  ctx.arcTo(x, y + h, x, y, r);
+  ctx.arcTo(x, y, x + w, y, r);
+  ctx.closePath();
+  ctx.fillStyle = 'rgba(24,32,52,0.55)';       // faint "read me" tint
+  ctx.fill();
+  ctx.lineWidth = 1;
+  ctx.strokeStyle = 'rgba(126,240,255,0.22)';  // soft cyan edge (player register)
+  ctx.stroke();
+  ctx.globalAlpha = 1;
+}
+
 function draw() {
   const now = performance.now() / 1000;
   const biome = biomeFor(game.depth);
@@ -2647,15 +2677,52 @@ function draw() {
     }
   }
 
+  // first-run how-to-play: one readable page over a dimmed field, tap to start
+  if (game.state === 'intro') {
+    dimScreen(1);
+    panelBox(VW / 2, VH * 0.46, VW - 40, 466, 1);
+    ctx.textAlign = 'center';
+    let y = VH * 0.46 - 205;
+    ctx.fillStyle = '#7ef0ff';
+    ctx.font = '800 34px Oxanium, -apple-system, sans-serif';
+    ctx.fillText('GRAVITY ASSIST', VW / 2, y); y += 24;
+    ctx.fillStyle = '#8fa2c8';
+    ctx.font = '600 13px Oxanium, -apple-system, sans-serif';
+    ctx.fillText('one fling. slingshot the stars. escape.', VW / 2, y); y += 40;
+    // numbered how-to lines with a gold lead-in per row
+    const rows = [
+      ['DRAG & RELEASE', 'anywhere to aim — the line shows your path,', 'longer drag = more power'],
+      ['REACH THE WORMHOLE', 'thread the spiral gate to escape the system', ''],
+      ['SLINGSHOT PLANETS', 'skim close for +' + PT + ' each — the reward flies', 'to your score'],
+      ['GRAB SATELLITES', 'the gold ' + '✦' + ' banks +' + PT + ', collect them all', ''],
+      ['DODGE MOONS', 'grey moons orbit non-stop — time your gap', ''],
+      ['5 SHIPS PER RUN', 'crash and retry the same system; your last', 'path stays as a guide'],
+    ];
+    ctx.textAlign = 'left';
+    const lx = 44;
+    for (const [head, l1, l2] of rows) {
+      ctx.fillStyle = '#ffd166';
+      ctx.font = '700 14px Oxanium, -apple-system, sans-serif';
+      ctx.fillText(head, lx, y); y += 17;
+      ctx.fillStyle = '#cdd8ee';
+      ctx.font = '600 12px Oxanium, -apple-system, sans-serif';
+      ctx.fillText(l1, lx, y); y += l2 ? 15 : 20;
+      if (l2) { ctx.fillText(l2, lx, y); y += 20; }
+    }
+    ctx.textAlign = 'center';
+    ctx.globalAlpha = 0.5 + 0.35 * Math.sin(now * 4);
+    ctx.fillStyle = '#e8f0ff';
+    ctx.font = '700 15px Oxanium, -apple-system, sans-serif';
+    ctx.fillText('tap to launch', VW / 2, VH * 0.46 + 214);
+    ctx.globalAlpha = 1;
+  }
+
   // biome-transition splash: name the place, show the station taking shape
   if (game.state === 'splash') {
     const st = (performance.now() - game.splashAt) / 1000;
     const fadeIn = Math.min(st / 0.3, 1);
-    ctx.save();
-    ctx.setTransform(1, 0, 0, 1, 0, 0);              // dim the whole canvas, letterbox included
-    ctx.fillStyle = 'rgba(4,5,10,' + (0.72 * fadeIn).toFixed(3) + ')';
-    ctx.fillRect(0, 0, canvas.width, canvas.height);
-    ctx.restore();
+    dimScreen(fadeIn);                               // dim the play behind (D-adr-024)
+    panelBox(VW / 2, VH * 0.5, VW - 48, VH * 0.62, fadeIn);   // faint "read me" panel
     ctx.globalAlpha = fadeIn;
     ctx.textAlign = 'center';
     // a lap wrap (every 33 systems) is a GALAXY jump, not just another biome
@@ -2815,6 +2882,7 @@ function frame(now) {
 }
 
 loadSystem(1);
+game.state = 'intro';                 // one-page how-to-play before the first fling
 // warm the game font so the canvas swaps to it within the first frames
 if (document.fonts && document.fonts.load) {
   for (const w of [600, 700, 800]) document.fonts.load(w + ' 30px Oxanium').catch(() => {});
