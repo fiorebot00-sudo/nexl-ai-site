@@ -1,0 +1,9 @@
+{
+  // deploy config for nexl-ai-site (Workers static assets).
+  // Manual deploy: CLOUDFLARE_API_TOKEN=... npx wrangler deploy
+  // (Workers Builds git auto-deploy has been broken since ~Apr 27 2026 — token issue.)
+  "name": "nexl-ai-site",
+  "compatibility_date": "2026-04-27",
+  "compatibility_flags": ["nodejs_compat"],
+  "assets": { "directory": "." }
+}
