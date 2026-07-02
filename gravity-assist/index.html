@@ -2703,19 +2703,21 @@ function draw() {
       ['DODGE MOONS', 'grey moons orbit non-stop — time your gap', ''],
       ['5 SHIPS PER RUN', 'crash and retry the same system;', 'your last path stays as a guide'],
     ];
-    // even reading rhythm: section heads spaced evenly between header and footer
+    // even reading rhythm: the BLANK gap after each block is constant, so
+    // one- and two-line blocks sit apart by the same amount (laid out
+    // sequentially, not on a fixed head step — 2-line blocks are taller)
     ctx.textAlign = 'left';
-    const lx = 40, headTop = cy - 186, headBot = cy + 158;
-    const step = (headBot - headTop) / (rows.length - 1);
-    rows.forEach(([head, l1, l2], i) => {
-      let ry = headTop + i * step;
+    const lx = 40, GAP = 41;
+    let ry = cy - 186;
+    rows.forEach(([head, l1, l2]) => {
       ctx.fillStyle = '#ffd166';
       ctx.font = '700 18px Oxanium, -apple-system, sans-serif';
-      ctx.fillText(head, lx, ry); ry += 23;
+      ctx.fillText(head, lx, ry);
       ctx.fillStyle = '#cdd8ee';
       ctx.font = '600 15px Oxanium, -apple-system, sans-serif';
-      ctx.fillText(l1, lx, ry); ry += 20;
-      if (l2) ctx.fillText(l2, lx, ry);
+      ctx.fillText(l1, lx, ry + 23);
+      if (l2) ctx.fillText(l2, lx, ry + 43);
+      ry += 23 + (l2 ? 20 : 0) + GAP;      // advance past this block's body, then the fixed gap
     });
     ctx.textAlign = 'center';
     ctx.globalAlpha = 0.5 + 0.35 * Math.sin(now * 4);
