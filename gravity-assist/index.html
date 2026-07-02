@@ -2685,40 +2685,40 @@ function draw() {
   // first-run how-to-play: one readable page over a dimmed field, tap to start
   if (game.state === 'intro') {
     dimScreen(1);
-    panelBox(VW / 2, VH * 0.46, VW - 40, 466, 1);
+    const cy = VH * 0.47;
+    panelBox(VW / 2, cy, VW - 32, 588, 1);
     ctx.textAlign = 'center';
-    let y = VH * 0.46 - 205;
+    let y = cy - 258;
     ctx.fillStyle = '#7ef0ff';
-    ctx.font = '800 34px Oxanium, -apple-system, sans-serif';
-    ctx.fillText('GRAVITY ASSIST', VW / 2, y); y += 24;
+    ctx.font = '800 40px Oxanium, -apple-system, sans-serif';
+    ctx.fillText('GRAVITY ASSIST', VW / 2, y); y += 30;
     ctx.fillStyle = '#8fa2c8';
-    ctx.font = '600 13px Oxanium, -apple-system, sans-serif';
-    ctx.fillText('one fling. slingshot the stars. escape.', VW / 2, y); y += 40;
-    // numbered how-to lines with a gold lead-in per row
+    ctx.font = '600 16px Oxanium, -apple-system, sans-serif';
+    ctx.fillText('one fling. slingshot the stars. escape.', VW / 2, y); y += 48;
     const rows = [
       ['DRAG & RELEASE', 'anywhere to aim — the line shows your path,', 'longer drag = more power'],
       ['REACH THE WORMHOLE', 'thread the spiral gate to escape the system', ''],
-      ['SLINGSHOT PLANETS', 'skim close for +' + PT + ' each — the reward flies', 'to your score'],
+      ['SLINGSHOT PLANETS', 'skim close for +' + PT + ' each — the reward', 'flies to your score'],
       ['GRAB SATELLITES', 'the gold ' + '✦' + ' banks +' + PT + ', collect them all', ''],
       ['DODGE MOONS', 'grey moons orbit non-stop — time your gap', ''],
-      ['5 SHIPS PER RUN', 'crash and retry the same system; your last', 'path stays as a guide'],
+      ['5 SHIPS PER RUN', 'crash and retry the same system;', 'your last path stays as a guide'],
     ];
     ctx.textAlign = 'left';
-    const lx = 44;
+    const lx = 40;
     for (const [head, l1, l2] of rows) {
       ctx.fillStyle = '#ffd166';
-      ctx.font = '700 14px Oxanium, -apple-system, sans-serif';
-      ctx.fillText(head, lx, y); y += 17;
+      ctx.font = '700 18px Oxanium, -apple-system, sans-serif';
+      ctx.fillText(head, lx, y); y += 23;
       ctx.fillStyle = '#cdd8ee';
-      ctx.font = '600 12px Oxanium, -apple-system, sans-serif';
-      ctx.fillText(l1, lx, y); y += l2 ? 15 : 20;
-      if (l2) { ctx.fillText(l2, lx, y); y += 20; }
+      ctx.font = '600 15px Oxanium, -apple-system, sans-serif';
+      ctx.fillText(l1, lx, y); y += l2 ? 20 : 28;
+      if (l2) { ctx.fillText(l2, lx, y); y += 28; }
     }
     ctx.textAlign = 'center';
     ctx.globalAlpha = 0.5 + 0.35 * Math.sin(now * 4);
     ctx.fillStyle = '#e8f0ff';
-    ctx.font = '700 15px Oxanium, -apple-system, sans-serif';
-    ctx.fillText('tap to launch', VW / 2, VH * 0.46 + 214);
+    ctx.font = '700 19px Oxanium, -apple-system, sans-serif';
+    ctx.fillText('tap to launch', VW / 2, cy + 268);
     ctx.globalAlpha = 1;
   }
 
