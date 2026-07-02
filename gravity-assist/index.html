@@ -1937,14 +1937,19 @@ function drawSignature(b, depth, sigT, dim) {
     ctx.fillStyle = g;
     ctx.fillRect(0, VH - 260, 260, 260);
   } else if (sig === 'godrays') {
-    // Shallows: light from the surface above — 3 swaying wedges (idle only)
-    ctx.fillStyle = 'rgba(140,220,220,0.04)';
+    // Shallows: light from the surface reaching all the way to the seabed —
+    // 3 swaying wedges that widen + attenuate as they descend (idle sway only)
+    const g = ctx.createLinearGradient(0, 0, 0, VH);
+    g.addColorStop(0, 'rgba(150,225,225,0.06)');
+    g.addColorStop(0.55, 'rgba(140,220,220,0.035)');
+    g.addColorStop(1, 'rgba(130,215,215,0.012)');   // dim on the seabed, never washed out
+    ctx.fillStyle = g;
     for (let i = 0; i < 3; i++) {
       const ax = [90, 210, 330][i] + Math.sin(sigT / 9 + i * 2.1) * 6;
-      const w = 50 + i * 15;
+      const wTop = 46 + i * 14, wBot = wTop + 70;    // spread wider toward the floor
       ctx.beginPath();
-      ctx.moveTo(ax, -4);
-      ctx.lineTo(ax - w / 2, 420); ctx.lineTo(ax + w / 2, 420);
+      ctx.moveTo(ax - wTop / 2, -4); ctx.lineTo(ax + wTop / 2, -4);
+      ctx.lineTo(ax + wBot / 2, VH); ctx.lineTo(ax - wBot / 2, VH);
       ctx.closePath(); ctx.fill();
     }
   } else if (sig === 'enso') {
