@@ -1,0 +1,28 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 420 120">
+  <defs>
+    <radialGradient id="pg" cx="35%" cy="30%" r="80%">
+      <stop offset="0%" stop-color="#8a6cf0"/><stop offset="60%" stop-color="#5a3fb0"/><stop offset="100%" stop-color="#3a2380"/>
+    </radialGradient>
+    <linearGradient id="traj" x1="10" y1="76" x2="102" y2="38" gradientUnits="userSpaceOnUse">
+      <stop offset="0%" stop-color="#7ef0ff" stop-opacity="0.08"/>
+      <stop offset="55%" stop-color="#7ef0ff" stop-opacity="0.45"/>
+      <stop offset="100%" stop-color="#7ef0ff" stop-opacity="1"/>
+    </linearGradient>
+    <linearGradient id="hull" x1="0" y1="-5" x2="0" y2="5" gradientUnits="userSpaceOnUse">
+      <stop offset="0%" stop-color="#eef2f5"/><stop offset="50%" stop-color="#aeb8c0"/><stop offset="100%" stop-color="#59636c"/>
+    </linearGradient>
+  </defs>
+  <circle cx="58" cy="66" r="13" fill="url(#pg)"/>
+  <circle cx="58" cy="66" r="13" fill="none" stroke="#8a6cf0" stroke-width="1" opacity=".35"/>
+  <path d="M 10 76 C 38 96, 82 94, 102 38" fill="none" stroke="url(#traj)" stroke-width="4" stroke-linecap="round"/>
+  <g transform="translate(102,38) rotate(-70)">
+    <path d="M -12 -2.5 L -19 0 L -12 2.5 Z" fill="#ff9a3c" opacity="0.85"/>
+    <path d="M -11.5 -4 L -15.5 -8.5 L -6.5 -4.2 Z" fill="#96a0a9"/>
+    <path d="M -11.5 4 L -15.5 8.5 L -6.5 4.2 Z" fill="#96a0a9"/>
+    <path d="M -12 -4.5 L 8 -4.5 Q 14.5 -2.6 16.5 0 Q 14.5 2.6 8 4.5 L -12 4.5 Z" fill="url(#hull)"/>
+    <path d="M 6 -4.3 L 3.5 -7 L 9.5 -4.4 Z" fill="#8b959e"/>
+    <path d="M 6 4.3 L 3.5 7 L 9.5 4.4 Z" fill="#8b959e"/>
+  </g>
+  <text x="140" y="52" font-family="Oxanium, sans-serif" font-weight="800" font-size="38" fill="#e8f0ff" letter-spacing="2" textLength="260" lengthAdjust="spacing">GRAVITY</text>
+  <text x="140" y="96" font-family="Oxanium, sans-serif" font-weight="800" font-size="38" fill="#7ef0ff" letter-spacing="2" textLength="260" lengthAdjust="spacing">ASSIST</text>
+</svg>

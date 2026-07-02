@@ -1,0 +1,2833 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no,viewport-fit=cover">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="theme-color" content="#070b14">
+<title>Gravity Assist</title>
+<link rel="icon" href="assets/icon.svg" type="image/svg+xml">
+<link rel="apple-touch-icon" href="assets/apple-touch-icon.png">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Oxanium:wght@600;700;800&display=swap" rel="stylesheet">
+<style>
+  html,body{margin:0;padding:0;background:#070b14;height:100%;overflow:hidden;overscroll-behavior:none}
+  canvas{display:block;touch-action:none}
+</style>
+</head>
+<body>
+<canvas id="c"></canvas>
+<script>
+'use strict';
+
+// All physics runs in a fixed 450x800 virtual space scaled to the screen, so a
+// given fling produces the identical path on every device (determinism rule,
+// DECISIONS D-adr-006).
+const VW = 450, VH = 800;
+const DT = 1 / 120;               // fixed physics timestep
+const PAD = { x: VW / 2, y: VH - 58 };
+const CRAFT_R = 7;
+const MIN_V = 160, MAX_V = 720;   // launch speed range (units/s); top trimmed — full
+                                  // power felt "super quick" (Mike, 2026-07-02)
+const PT = 50;                    // display points per internal point (D-adr-022):
+                                  // internal math stays 1s, the player sees 50s
+const DRAG_FULL = 250;            // drag distance (px) for full power
+const MAX_FLIGHT = 10;            // s; after this the craft is "lost" (orbit trap)
+const G_BASE = 3.0e6;             // gravity scale for a 24u-radius planet at gscale 1
+const SOFT = 400;                 // softening so gravity never blows up at contact
+const A_CAP = 2000;               // max acceleration (units/s^2)
+const BOUNDS = { x0: -60, x1: VW + 60, y0: -80, y1: VH + 80 };
+const ASSIST_MARGIN = 26;         // pass within planet r + this = slingshot assist
+
+// ---------- parallax starfield (visual only; drifts down = we fly up) ----------
+// Luminance discipline (RESEARCH-VISUAL 1.4): background stays below ~35% of
+// ship/goal brightness so stars never compete with play. A few 'hero' stars
+// live in the slowest layer only.
+const STAR_LAYERS = (() => {
+  const layers = [];
+  for (const [speed, count, size, alpha] of [[6, 50, 0.7, 0.15], [14, 34, 1.0, 0.30], [26, 18, 1.3, 0.50]]) {
+    const stars = [];
+    for (let i = 0; i < count; i++)
+      stars.push({ x: Math.random() * VW, y: Math.random() * VH,
+                   r: size * (0.6 + Math.random() * 0.8), a: alpha * (0.5 + Math.random() * 0.5) });
+    layers.push({ speed, stars });
+  }
+  for (let i = 0; i < 4; i++)   // hero stars: slowest layer, slightly bigger, still dim
+    layers[0].stars.push({ x: Math.random() * VW, y: Math.random() * VH, r: 1.6, a: 0.22, hero: true });
+  return layers;
+})();
+
+// ---------- biomes: the 11-stop visual cycle (docs/STYLE-GUIDE.md) ----------
+// Biome every 3 systems; palettes swap but color ROLES never do; temperature
+// and darkness track the difficulty ramp. Laps past 33 replay dimmer.
+const BIOMES = [
+  { name: 'HOME STRETCH', mood: 'the backyard of the solar system', bg: '#0a0e1c',
+    decor: { nebula: 0.50, oort: 0.25, hues: ['120,220,255', '160,190,255', '190,160,255'], aMin: 0.04, aMax: 0.08 },
+    stars: { density: 1.0, alpha: 1.0 },
+    planets: { earth: 3, venus: 2, mars: 2, mercury: 1, jupiter: 1, saturn: 1 },
+    ambient: { pNat: 0.28, pUnnat: 0.08, naturals: ['comet', 'comet', 'asteroid'], unnaturals: ['satellite', 'voyager'] },
+    signature: 'homeGlow',
+    // B1 "last dusk at the cape" — the control biome: only one that stays classic space
+    bgGrad: ['#060a14', '#0d1322'], scenery: 'cape',
+    ground: { top: '#3e4a56', style: 'city' } },
+  { name: 'THE SHALLOWS', mood: 'still gentle — first hint of elsewhere', bg: '#08151a',
+    decor: { nebula: 0.60, oort: 0.20, hues: ['120,255,190', '120,220,255', '90,200,220'], aMin: 0.04, aMax: 0.08 },
+    stars: { density: 1.0, alpha: 0.95 },
+    planets: { uranus: 3, neptune: 3, earth: 2, mercury: 1, saturn: 1 },
+    ambient: { pNat: 0.28, pUnnat: 0.08, naturals: ['comet', 'comet', 'galaxy'], unnaturals: ['voyager'] },
+    signature: 'godrays',
+    // B2 "you are underwater now" — brighter at the TOP (the surface is up there)
+    bgGrad: ['#0e191c', '#04090c'], skyMode: 'bubbles', scenery: 'kelp',
+    planetMode: { mode: 'duotone', hex: '#2e7f7a', k: 0.45, caustic: true },
+    ground: { top: '#2e4a4a', style: 'pools' } },
+  { name: 'VIOLET DEEP', mood: 'far from home now', bg: '#0d0916',
+    decor: { nebula: 0.70, oort: 0.10, hues: ['180,140,255', '200,120,255', '140,120,255'], aMin: 0.05, aMax: 0.09 },
+    stars: { density: 0.9, alpha: 0.95 },
+    planets: { neptune: 3, saturn: 2, uranus: 2, jupiter: 2, venus: 1 },
+    ambient: { pNat: 0.28, pUnnat: 0.06, naturals: ['galaxy', 'galaxy', 'comet'], unnaturals: ['ufo'] },
+    signature: 'enso',
+    // B3 ink-wash night — sumi-e: ink planets, brush-stroke decor, the enso
+    skyMode: 'flecks', scenery: 'inkblooms', decorMode: 'brush',
+    planetMode: { mode: 'ink' },
+    ground: { top: '#3d3352', style: 'crystals' } },
+  { name: 'THE ICE SHELF', mood: 'crystalline, quiet, brittle', bg: '#0e1626',
+    decor: { nebula: 0.25, oort: 0.60, hues: ['150,220,255', '200,240,255', '120,200,230'], aMin: 0.03, aMax: 0.06 },
+    stars: { density: 1.15, alpha: 1.1 },
+    planets: { uranus: 3, neptune: 3, mercury: 2, earth: 1 },
+    ambient: { pNat: 0.32, pUnnat: 0.06, naturals: ['comet', 'comet', 'comet', 'asteroid'], unnaturals: ['voyager'] },
+    signature: 'aurora',
+    // B4 glacial cavern — inside the shelf: stalactites, snowfall, cut-ice worlds
+    bgGrad: ['#0a1220', '#101b2e'], skyMode: 'snow', scenery: 'stalactites',
+    planetMode: { mode: 'duotone', hex: '#bfe4f2', k: 0.30, facets: true },
+    ground: { top: '#46566a', style: 'ice' } },
+  { name: 'EMERALD VERGE', mood: 'the last friendly place', bg: '#081711',
+    decor: { nebula: 0.60, oort: 0.15, hues: ['120,255,190', '90,230,150', '160,255,210'], aMin: 0.04, aMax: 0.08 },
+    stars: { density: 0.9, alpha: 0.9 },
+    planets: { earth: 3, uranus: 2, venus: 2, jupiter: 1, saturn: 1 },
+    ambient: { pNat: 0.28, pUnnat: 0.08, naturals: ['galaxy', 'comet', 'comet'], unnaturals: ['satellite'] },
+    signature: 'fireflies',
+    // B5 bioluminescent canopy — the last friendly place is alive
+    bgGrad: ['#05130c', '#0a1a10'], skyMode: 'spores', scenery: 'canopy',
+    planetMode: { mode: 'duotone', hex: '#2f7a4a', k: 0.40 },
+    ground: { top: '#31493c', style: 'moss' } },
+  { name: 'GILDED DRIFT', mood: 'amber dust — the warm turn', bg: '#16110a',
+    decor: { nebula: 0.35, oort: 0.50, hues: ['255,190,120', '255,210,150', '230,170,110'], aMin: 0.04, aMax: 0.08 },
+    stars: { density: 0.85, alpha: 0.95 },
+    planets: { saturn: 3, venus: 3, jupiter: 2, mercury: 1 },
+    ambient: { pNat: 0.28, pUnnat: 0.08, naturals: ['asteroid', 'asteroid', 'comet'], unnaturals: ['satellite'] },
+    signature: 'dust',
+    // B6 the dune sea — Alto homage: ridge silhouettes, papercut planets
+    bgGrad: ['#0d0906', '#1a130a'], scenery: 'dunesea',
+    planetMode: { mode: 'flat2', tint: '#b98a4e' },
+    ground: { top: '#54432c', style: 'dunes' } },
+  { name: 'THE RUST BELT', mood: 'dead mining country', bg: '#140b07',
+    decor: { nebula: 0.30, oort: 0.55, hues: ['255,150,90', '220,140,100', '255,170,120'], aMin: 0.04, aMax: 0.07 },
+    stars: { density: 0.8, alpha: 0.85 },
+    planets: { mars: 3, mercury: 3, jupiter: 2, venus: 1 },
+    ambient: { pNat: 0.34, pUnnat: 0.08, naturals: ['asteroid', 'asteroid', 'asteroid', 'comet'], unnaturals: ['satellite'] },
+    signature: 'rocks',
+    // B7 gantry country — industrial frame, hatched iron worlds, ash
+    skyMode: 'ash', scenery: 'gantries',
+    planetMode: { mode: 'duotone', hex: '#8a4a26', k: 0.35, hatch: true },
+    ground: { top: '#4d3226', style: 'mining' } },
+  { name: 'CRIMSON SHOALS', mood: 'everything warning-colored', bg: '#1a0a10',
+    decor: { nebula: 0.70, oort: 0.15, hues: ['255,100,130', '255,120,180', '220,80,110'], aMin: 0.05, aMax: 0.09 },
+    stars: { density: 0.75, alpha: 0.85 },
+    planets: { mars: 3, jupiter: 2, neptune: 2, mercury: 1 },
+    ambient: { pNat: 0.28, pUnnat: 0.08, naturals: ['comet', 'asteroid', 'asteroid'], unnaturals: ['ufo'] },
+    signature: 'plumes',
+    // B8 the vent reef — abyss: coral fans, breathing smoker plumes, plankton
+    bgGrad: ['#150609', '#1a0a10'], skyMode: 'plankton', scenery: 'coral',
+    planetMode: { mode: 'duotone', hex: '#c14a5e', k: 0.40 },
+    ground: { top: '#4a2733', style: 'reef' } },
+  { name: 'DEAD SPACE', mood: 'nothing lives here', bg: '#0d0d12',
+    decor: { nebula: 0.10, oort: 0.20, hues: ['150,150,170', '130,140,150'], aMin: 0.02, aMax: 0.04 },
+    stars: { density: 0.55, alpha: 0.7 },
+    planets: { mercury: 4, mars: 2, jupiter: 1, neptune: 1 },
+    ambient: { pNat: 0.20, pUnnat: 0.12, naturals: ['asteroid'], unnaturals: ['voyager', 'satellite'] },
+    signature: 'dyingStar',
+    // B9 THE BLUEPRINT — rendering dies out here: grid, wireframe worlds, plotter stars
+    skyMode: 'squares', scenery: 'grid', decorMode: 'none',
+    planetMode: { mode: 'wire' },
+    ground: { top: '#33343c', style: 'barren' } },
+  { name: 'EMBER NEBULA', mood: 'smoke over coals', bg: '#120705',
+    decor: { nebula: 0.65, oort: 0.20, hues: ['255,120,70', '255,150,90', '200,90,60'], aMin: 0.05, aMax: 0.09 },
+    stars: { density: 0.6, alpha: 0.8 },
+    planets: { mars: 3, jupiter: 3, mercury: 2, venus: 1 },
+    ambient: { pNat: 0.28, pUnnat: 0.08, naturals: ['asteroid', 'comet', 'asteroid'], unnaturals: ['ufo'] },
+    signature: 'embers',
+    // B10 the forge below — the light source flips underneath: coals lit by lava
+    bgGrad: ['#0c0503', '#180903'], skyMode: 'ashLight', scenery: 'forge',
+    planetMode: { mode: 'underlit' },
+    ground: { top: '#3c221a', style: 'embers' } },
+  { name: 'EVENT HORIZON', mood: 'the edge of everything', bg: '#070512',
+    decor: { nebula: 0.25, oort: 0.15, hues: ['150,110,255', '110,90,220'], aMin: 0.03, aMax: 0.05 },
+    stars: { density: 0.45, alpha: 0.65 },
+    planets: { neptune: 3, mercury: 2, uranus: 2, jupiter: 1 },
+    ambient: { pNat: 0.18, pUnnat: 0.14, naturals: ['galaxy'], unnaturals: ['ufo', 'ufo', 'voyager'] },
+    signature: 'accretion',
+    // B11 the lens — everything orients toward an unseen point above the frame
+    skyMode: 'streaks', scenery: 'contours',
+    planetMode: { mode: 'eclipse' },
+    ground: { top: '#2a2440', style: 'glass' } },
+];
+const biomeFor = depth => BIOMES[Math.floor((depth - 1) / 3) % BIOMES.length];
+const lapDim = depth => Math.pow(0.92, Math.min(Math.floor((depth - 1) / 33), 3));
+// One 33-system lap through all 11 biomes = one galaxy; the wrap is a jump.
+const galaxyFor = depth => Math.floor((depth - 1) / 33) + 1;
+
+// One tip per system, seeded so it's stable across retries of that system.
+const TIPS = [
+  'graze a planet close for a slingshot bonus',
+  'satellites are +1 — detour when it’s safe',
+  'satellites bank instantly, even on a failed flight',
+  'moons never stop orbiting — time the gap',
+  'softer flings curve more than full power',
+  'gravity pulls hardest on the closest pass',
+  'after a crash, your last path stays marked — study it',
+  'the aim preview shortens the deeper you go',
+  'a new best unlocks fresh territory',
+  'ships refill on a new run — spend them learning',
+  'the aim line turns gold at full power',
+  'plan backwards from the wormhole',
+  'every system has at least one way out',
+];
+
+function lerpColor(c1, c2, t) {
+  const a = parseInt(c1.slice(1), 16), b = parseInt(c2.slice(1), 16);
+  const r = Math.round((a >> 16) + (((b >> 16) & 255) - (a >> 16)) * t);
+  const g = Math.round(((a >> 8) & 255) + (((b >> 8) & 255) - ((a >> 8) & 255)) * t);
+  const bl = Math.round((a & 255) + ((b & 255) - (a & 255)) * t);
+  return 'rgb(' + r + ',' + g + ',' + bl + ')';
+}
+
+const PLANET_TYPES = ['mercury', 'venus', 'earth', 'mars', 'jupiter', 'saturn', 'uranus', 'neptune'];
+const PLANET_COLORS = {
+  mercury: ['#c8c4c0', '#8a8480', '#403c39'],
+  venus:   ['#f6e7c0', '#dca94e', '#7a4c17'],
+  earth:   ['#a8dcff', '#2f7fd4', '#0a3268'],
+  mars:    ['#f2a774', '#c1440e', '#521b05'],
+  jupiter: ['#ecd8b0', '#c9a06b', '#7a4e2b'],
+  saturn:  ['#f2e4ba', '#d9b678', '#8a6536'],
+  uranus:  ['#d8f2f6', '#8fd0de', '#39808f'],
+  neptune: ['#8fc2ff', '#3060d4', '#10246e'],
+};
+
+// ---------- starbase metagame: lifetime points build the station stage by stage
+// (16-stage construction narrative, docs/STATION-DESIGN.md) ----------
+const STATION_STAGES = [
+  { at: 5,   name: 'TRUSS SPINE' },
+  { at: 12,  name: 'CORE MODULE' },
+  { at: 22,  name: 'SOLAR ARRAY' },
+  { at: 35,  name: 'COMMS MAST' },
+  { at: 52,  name: 'HAB MODULE' },
+  { at: 72,  name: 'SOLAR ARRAY II' },
+  { at: 96,  name: 'DOCKING PORT' },
+  { at: 124, name: 'SCIENCE LAB' },
+  { at: 156, name: 'RADIATOR TRUSS' },
+  { at: 192, name: 'HABITAT RING' },
+  { at: 232, name: 'DEFENSE GRID' },
+  { at: 276, name: 'CARGO BAY' },
+  { at: 324, name: 'OBSERVATORY' },
+  { at: 376, name: 'SHIPYARD GANTRY' },
+  { at: 435, name: 'FUEL FARM' },
+  { at: 500, name: 'STAR BEACON' },
+];
+function partsUnlocked(c) { return STATION_STAGES.filter(p => c >= p.at).length; }
+
+// Orbiter (moon/satellite) position at orbit-time t. Orbiters run FULL TIME
+// (D-adr-022): wall clock while aiming, physics time in flight (offset by the
+// launch instant, craft.t0, so the handoff is seamless). Determinism is per
+// launch state — same fling at the same orbit phase = same path; timing the
+// gap is part of the game now.
+function orbPos(layout, o, t) {
+  const p = layout.planets[o.pi];
+  const a = o.a0 + o.om * t;
+  return [p.x + Math.cos(a) * o.orbR, p.y + Math.sin(a) * o.orbR];
+}
+
+// ---------- seeded rng (generation only — physics has no randomness) ----------
+function mulberry32(seed) {
+  let a = seed >>> 0;
+  return function () {
+    a |= 0; a = (a + 0x6D2B79F5) | 0;
+    let t = Math.imul(a ^ (a >>> 15), 1 | a);
+    t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
+    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+  };
+}
+
+// ---------- physics core (pure: shared by flight, preview, and solver) ----------
+function accel(px, py, planets, gscale) {
+  let ax = 0, ay = 0;
+  for (const p of planets) {
+    const dx = p.x - px, dy = p.y - py;
+    const d2 = dx * dx + dy * dy;
+    const d = Math.sqrt(d2) || 1;
+    let a = (G_BASE * gscale * (p.r / 24) * (p.r / 24)) / (d2 + SOFT);
+    if (a > A_CAP) a = A_CAP;
+    ax += (dx / d) * a;
+    ay += (dy / d) * a;
+  }
+  return [ax, ay];
+}
+
+function simulate(layout, vx, vy, maxT, t0) {
+  t0 = t0 || 0;                      // orbit-phase offset (0 = generation baseline)
+  let x = PAD.x, y = PAD.y;
+  const path = [x, y];
+  const steps = Math.floor(maxT / DT);
+  for (let i = 0; i < steps; i++) {
+    const t = t0 + (i + 1) * DT;
+    const [ax, ay] = accel(x, y, layout.planets, layout.gscale);
+    vx += ax * DT; vy += ay * DT;      // semi-implicit Euler: stable + deterministic
+    x += vx * DT; y += vy * DT;
+    path.push(x, y);
+    for (const p of layout.planets) {
+      const dx = x - p.x, dy = y - p.y;
+      if (dx * dx + dy * dy < (p.r + CRAFT_R - 1) * (p.r + CRAFT_R - 1))
+        return { outcome: 'crash', path, x, y };
+    }
+    for (const m of (layout.moons || [])) {
+      const [mx, my] = orbPos(layout, m, t);
+      const dx = x - mx, dy = y - my;
+      if (dx * dx + dy * dy < (m.r + CRAFT_R - 1) * (m.r + CRAFT_R - 1))
+        return { outcome: 'crash', path, x, y };
+    }
+    const gx = x - layout.gate.x, gy = y - layout.gate.y;
+    if (gx * gx + gy * gy < layout.gate.r * layout.gate.r)
+      return { outcome: 'win', path, x, y };
+    if (x < BOUNDS.x0 || x > BOUNDS.x1 || y < BOUNDS.y0 || y > BOUNDS.y1)
+      return { outcome: 'lost', path, x, y };
+  }
+  return { outcome: 'timeout', path, x, y };
+}
+
+function willEnterGate(c, L) {
+  // Exact lookahead from the live craft state: same integrator, same step
+  // order, same collision checks as tick() — deterministic physics makes this
+  // a prediction, not a guess. Powers the entry "tell": the nose only turns
+  // if this flight WILL end in the gate.
+  let x = c.x, y = c.y, vx = c.vx, vy = c.vy, t = c.t;
+  const steps = Math.ceil(Math.min(MAX_FLIGHT - t, 3) / DT);
+  for (let i = 0; i < steps; i++) {
+    const [ax, ay] = accel(x, y, L.planets, L.gscale);
+    vx += ax * DT; vy += ay * DT;
+    x += vx * DT; y += vy * DT;
+    t += DT;
+    for (const p of L.planets) {
+      const dx = x - p.x, dy = y - p.y;
+      if (dx * dx + dy * dy < (p.r + CRAFT_R - 1) ** 2) return false;
+    }
+    for (const m of L.moons) {
+      const [mx, my] = orbPos(L, m, (c.t0 || 0) + t);
+      const dx = x - mx, dy = y - my;
+      if (dx * dx + dy * dy < (m.r + CRAFT_R - 1) ** 2) return false;
+    }
+    const gx = x - L.gate.x, gy = y - L.gate.y;
+    if (gx * gx + gy * gy < L.gate.r * L.gate.r) return true;
+    if (x < BOUNDS.x0 || x > BOUNDS.x1 || y < BOUNDS.y0 || y > BOUNDS.y1) return false;
+    if (t > MAX_FLIGHT) return false;
+  }
+  return false;
+}
+
+function solve(layout) {
+  for (let f = 0.35; f <= 1.001; f += 0.05) {
+    const v = MIN_V + (MAX_V - MIN_V) * f;
+    for (let deg = 25; deg <= 155; deg += 3) {
+      const th = deg * Math.PI / 180;
+      const vx = Math.cos(th) * v, vy = -Math.sin(th) * v;
+      if (simulate(layout, vx, vy, 6).outcome === 'win') return { vx, vy };
+    }
+  }
+  return null;
+}
+
+// Gravity must be load-bearing: if aiming straight at the gate wins, the layout
+// is a no-thought shot and gets rejected (ADR D-adr-013).
+function straightShotWins(layout) {
+  const bearing = Math.atan2(-(layout.gate.y - PAD.y), layout.gate.x - PAD.x);
+  for (const dd of [-6, -3, 0, 3, 6]) {
+    const th = bearing + dd * Math.PI / 180;
+    for (let f = 0.35; f <= 1.001; f += 0.1) {
+      const v = MIN_V + (MAX_V - MIN_V) * f;
+      if (simulate(layout, Math.cos(th) * v, -Math.sin(th) * v, 6).outcome === 'win')
+        return true;
+    }
+  }
+  return false;
+}
+
+// ---------- system generation: gravity-forward from system 1, fast ramp ----------
+function difficulty(depth) {
+  return {
+    nPlanets: Math.min(1 + Math.floor((depth + 1) / 2), 4),      // 1,2,2,3,3,4...
+    gscale: Math.min(0.9 + 0.12 * (depth - 1), 1.7),
+    gateR: Math.max(26, 54 - 2.2 * (depth - 1)),
+  };
+}
+
+// Preview: helpful for two systems, then shrinks fast (D-adr-007).
+function previewT(depth) {
+  return depth <= 2 ? 1.1 : Math.max(0.35, 1.1 - 0.11 * (depth - 2));
+}
+
+// ---------- playground: ?playground = empty testbed for entry-feel tuning ----------
+// No planets means no gravity: straight, fully predictable shots at just the
+// wormhole. The gate wanders per "system" for varied entry angles. Career/best
+// are never banked from here (see addCareer/saveBest guards).
+const PLAYGROUND = /[?#]playground/.test(location.href);
+function playgroundSystem(depth) {
+  const rng = mulberry32((depth * 2654435761) >>> 0);
+  const layout = { planets: [], moons: [], sats: [], gscale: 1,
+    gate: { x: 80 + rng() * (VW - 160), y: 170 + rng() * 280, r: 54 } };
+  return { layout, sol: solve(layout), depth, decor: { type: 'clear' } };
+}
+
+function genSystem(depth, runSeed) {
+  const rng = mulberry32((runSeed ^ Math.imul(depth, 2654435761)) >>> 0);
+  const diff = difficulty(depth);
+
+  // per-system atmosphere: nebula wisps or an Oort speck band, biome-tinted and
+  // seeded so each system's feel is part of its identity (identical on retries)
+  const biome = biomeFor(depth);
+  const dim = lapDim(depth);
+  const decor = (() => {
+    if (biome.decorMode === 'none') return { type: 'clear' };   // the Blueprint plots nothing
+    if (biome.decorMode === 'brush') {                          // sumi-e strokes, seeded
+      const strokes = [];
+      const nb2 = 4 + Math.floor(rng() * 3);
+      for (let i = 0; i < nb2; i++)
+        strokes.push({ x: rng() * VW, y: rng() * VH * 0.75, len: 150 + rng() * 110,
+                       ang: (-20 - rng() * 20) * Math.PI / 180, a: 0.05 + rng() * 0.02, w: 30 });
+      return { type: 'brush', strokes };
+    }
+    const roll = rng();
+    if (roll < biome.decor.nebula) {
+      const hue = biome.decor.hues[Math.floor(rng() * biome.decor.hues.length)];
+      const blobs = [];
+      const nb = 3 + Math.floor(rng() * 3);
+      for (let i = 0; i < nb; i++)
+        blobs.push({ x: rng() * VW, y: rng() * VH * 0.8, r: 60 + rng() * 110,
+                     a: ((biome.decor.aMin + rng() * (biome.decor.aMax - biome.decor.aMin)) * dim).toFixed(3), hue });
+      return { type: 'nebula', blobs };
+    }
+    if (roll < biome.decor.nebula + biome.decor.oort) {
+      const specks = [];
+      const yBase = 150 + rng() * 400, tilt = (rng() - 0.5) * 0.8;
+      const aScale = (biome.decor.aMax / 0.08) * dim;
+      for (let i = 0; i < 55; i++) {
+        const x = rng() * VW;
+        specks.push({ x, y: yBase + x * tilt + (rng() - 0.5) * 90, r: 0.5 + rng() * 1.1,
+                      a: (0.06 + rng() * 0.12) * aScale });
+      }
+      return { type: 'oort', specks };
+    }
+    return { type: 'clear' };
+  })();
+
+  // weighted planet-type pick per biome (unlisted types = 0), WITHOUT repeats —
+  // a system never shows the same world twice; if a biome runs out of types the
+  // repeat becomes a shade variant (see drawPlanet's detail tint)
+  const pickPlanetType = (used) => {
+    let pool = Object.keys(biome.planets).filter(k => !used.has(k));
+    if (!pool.length) pool = Object.keys(biome.planets);
+    const total = pool.reduce((s, k) => s + biome.planets[k], 0);
+    let w = rng() * total;
+    for (const k of pool) { w -= biome.planets[k]; if (w <= 0) { used.add(k); return k; } }
+    used.add(pool[pool.length - 1]);
+    return pool[pool.length - 1];
+  };
+
+  const clearOf = (x, y, r, gate, planets) => {
+    if (x < r + 16 || x > VW - r - 16 || y < 190 || y > 640) return false;
+    const gdx = x - gate.x, gdy = y - gate.y;
+    if (gdx * gdx + gdy * gdy < (gate.r + r + 40) ** 2) return false;
+    const pdx = x - PAD.x, pdy = y - PAD.y;
+    if (pdx * pdx + pdy * pdy < (r + 110) ** 2) return false;
+    return !planets.some(q => {
+      const dx = q.x - x, dy = q.y - y;
+      return dx * dx + dy * dy < (q.r + r + 60) ** 2;
+    });
+  };
+
+  // Pass 1 demands a corridor guard + no straight-shot win; if the dice are cold,
+  // relax to plain-solvable so generation always terminates.
+  for (let strict = 1; strict >= 0; strict--) {
+    let nPlanets = diff.nPlanets;
+    while (nPlanets >= 0) {
+      for (let attempt = 0; attempt < 80; attempt++) {
+        const gate = {
+          x: diff.gateR + 34 + rng() * (VW - 2 * (diff.gateR + 34)),
+          y: 58 + diff.gateR,        // gate top clears the HUD even at max radius
+          r: diff.gateR,
+        };
+        const planets = [];
+        const usedTypes = new Set();
+        let ok = true;
+        for (let i = 0; i < nPlanets && ok; i++) {
+          let placed = false;
+          for (let t = 0; t < 30 && !placed; t++) {
+            const r = 18 + rng() * 24;
+            let x, y;
+            if (i === 0) {
+              // corridor guard: sit near the pad->gate line so the shot must curve
+              const seg = 0.35 + rng() * 0.35;
+              const bx = PAD.x + (gate.x - PAD.x) * seg, by = PAD.y + (gate.y - PAD.y) * seg;
+              const dx = gate.x - PAD.x, dy = gate.y - PAD.y, len = Math.hypot(dx, dy);
+              const off = (r + 20 + rng() * 60) * (rng() < 0.5 ? -1 : 1);
+              x = bx + (-dy / len) * off; y = by + (dx / len) * off;
+            } else {
+              x = 18 + 24 + rng() * (VW - 84); y = 190 + rng() * 450;
+            }
+            if (!clearOf(x, y, r, gate, planets)) continue;
+            planets.push({ x, y, r, type: pickPlanetType(usedTypes), detail: rng() });
+            placed = true;
+          }
+          if (!placed) ok = false;
+        }
+        if (!ok) continue;
+        const layout = { planets, moons: [], sats: [], gate, gscale: diff.gscale };
+        // orbiters: moons are hazards (in the solve, so systems stay fair);
+        // satellites are score pickups (solve ignores them — they block nothing)
+        if (depth >= 2) {
+          let moonCount = 0;
+          for (let pi = 0; pi < planets.length; pi++) {
+            const p = planets[pi];
+            const orbR = p.r + 16 + rng() * p.r * 0.8;
+            const oR = 5 + rng() * 4;
+            const gd = Math.hypot(p.x - gate.x, p.y - gate.y);
+            const pd = Math.hypot(p.x - PAD.x, p.y - PAD.y);
+            const onScreen = p.x - orbR > 10 && p.x + orbR < VW - 10 && p.y - orbR > 100 && p.y + orbR < 700;
+            if (!onScreen || gd < orbR + gate.r + oR + 12 || pd < orbR + oR + 60) continue;
+            const roll = rng();
+            // speed tiers assigned round-robin: coexisting orbiters visibly
+            // differ in pace (D-adr-022 — "different speeds" is a Mike ask)
+            const tier = [0.4, 0.85, 1.4][(layout.moons.length + layout.sats.length) % 3];
+            const orb = { pi, orbR, a0: rng() * Math.PI * 2, om: (tier + rng() * 0.25) * (rng() < 0.5 ? -1 : 1) };
+            if (depth >= 3 && roll < 0.30 && moonCount < 2) {
+              layout.moons.push({ ...orb, r: oR }); moonCount++;
+            } else if (roll < 0.65) {
+              layout.sats.push({ ...orb, r: 4, got: false });
+            }
+          }
+        }
+        if (strict && nPlanets > 0 && straightShotWins(layout)) continue;
+        const sol = solve(layout);   // guaranteed-solvable rule: D-adr-006 (moons included)
+        if (sol) return { layout, sol, depth, decor };
+      }
+      nPlanets--;
+    }
+  }
+  throw new Error('unsolvable empty system — physics broken');
+}
+
+// ---------- audio (all synthesized; created on first gesture for iOS) ----------
+let AC = null;
+function audio() {
+  if (!AC) { try { AC = new (window.AudioContext || window.webkitAudioContext)(); } catch (e) {} }
+  if (AC && AC.state === 'suspended') AC.resume();
+  return AC;
+}
+function tone(f0, f1, dur, type, gain, delay) {
+  const ac = AC; if (!ac || ac.state !== 'running') return;
+  const t = ac.currentTime + (delay || 0);
+  const o = ac.createOscillator(), g = ac.createGain();
+  o.type = type || 'sine';
+  o.frequency.setValueAtTime(f0, t);
+  o.frequency.exponentialRampToValueAtTime(Math.max(f1, 1), t + dur);
+  g.gain.setValueAtTime(gain || 0.15, t);
+  g.gain.exponentialRampToValueAtTime(0.001, t + dur);
+  o.connect(g); g.connect(ac.destination);
+  o.start(t); o.stop(t + dur + 0.02);
+}
+function noiseBurst(dur, gain, freq) {
+  const ac = AC; if (!ac || ac.state !== 'running') return;
+  const n = Math.floor(ac.sampleRate * dur);
+  const buf = ac.createBuffer(1, n, ac.sampleRate);
+  const d = buf.getChannelData(0);
+  for (let i = 0; i < n; i++) d[i] = (Math.random() * 2 - 1) * (1 - i / n);
+  const src = ac.createBufferSource(); src.buffer = buf;
+  const f = ac.createBiquadFilter(); f.type = 'lowpass'; f.frequency.value = freq;
+  const g = ac.createGain(); g.gain.value = gain;
+  src.connect(f); f.connect(g); g.connect(ac.destination);
+  src.start();
+}
+const sfx = {
+  launch: () => { tone(170, 50, 0.2, 'sine', 0.3); noiseBurst(0.14, 0.12, 2200); },
+  assist: (streak) => tone(660 * Math.pow(2, Math.min(streak || 0, 8) / 12), 990, 0.1, 'sine', 0.14),
+  // bank: brighter/higher than assist, pitch-laddered +2 semitones per streak
+  // step capped at +8 (Peggle scale-climb, RESEARCH-SCORE-FX §6/§7)
+  bank: (streak) => {
+    const p = Math.pow(2, Math.min((streak || 0) * 2, 8) / 12);
+    tone(1050 * p, 1420 * p, 0.09, 'triangle', 0.16);
+    tone(1580 * p, 1580 * p, 0.06, 'sine', 0.10, 0.03);
+  },
+  crash: () => { noiseBurst(0.28, 0.3, 800); tone(110, 38, 0.3, 'sine', 0.32); },
+  lost: () => tone(300, 90, 0.5, 'sine', 0.12),
+  escape: (nBest) => {
+    tone(523, 523, 0.09, 'sine', 0.18);
+    tone(659, 659, 0.09, 'sine', 0.18, 0.07);
+    tone(784, 784, 0.14, 'sine', 0.18, 0.14);
+    if (nBest) tone(1046, 1046, 0.22, 'sine', 0.18, 0.24);
+  },
+};
+
+// ---------- game state ----------
+const canvas = document.getElementById('c');
+const ctx = canvas.getContext('2d');
+let scale = 1, ox = 0, oy = 0;
+
+function resize() {
+  const dpr = Math.min(window.devicePixelRatio || 1, 3);
+  const w = window.innerWidth, h = window.innerHeight;
+  canvas.width = w * dpr; canvas.height = h * dpr;
+  canvas.style.width = w + 'px'; canvas.style.height = h + 'px';
+  scale = Math.min(w / VW, h / VH) * dpr;
+  ox = (w * dpr - VW * scale) / 2;
+  oy = (h * dpr - VH * scale) / 2;
+}
+window.addEventListener('resize', resize);
+resize();
+
+let best = 0, career = 0;
+try { best = parseInt(localStorage.getItem('gg_best') || '0', 10) || 0; } catch (e) {}
+try { career = parseInt(localStorage.getItem('gg_career') || '0', 10) || 0; } catch (e) {}
+
+function addCareer(n) {
+  if (PLAYGROUND) return;            // sandbox flights never bank to the station
+  const before = partsUnlocked(career);
+  career += n;
+  try { localStorage.setItem('gg_career', String(career)); } catch (e) {}
+  const after = partsUnlocked(career);
+  if (after > before) {
+    game.partUnlocked = STATION_STAGES[after - 1].name;
+    game.floats.push({ x: VW / 2, y: VH * 0.42, txt: 'NEW PART: ' + game.partUnlocked, vy: -18, life: 1.6, size: 22, color: '#ffd166' });
+    sfx.escape(true);
+  }
+}
+
+function saveBest() {
+  if (PLAYGROUND) return false;      // sandbox flights never touch the record
+  if (game.score > best) {
+    best = game.score;
+    try { localStorage.setItem('gg_best', String(best)); } catch (e) {}
+    return true;
+  }
+  return false;
+}
+
+const game = {
+  state: 'aim',        // aim | flight | dead | win
+  lives: 5,            // spacecraft per run; a crash costs one, retry same system
+  score: 0,            // points (systems cleared x slingshot multiplier)
+  dispScore: 0,        // count-up display value trailing score
+  depth: 1,
+  runSeed: (Date.now() & 0xffffffff) >>> 0,
+  sys: null,
+  craft: { x: PAD.x, y: PAD.y, vx: 0, vy: 0, t: 0 },
+  trail: [],
+  flightPath: [],      // full uncapped path of current flight (for the ghosts)
+  ghosts: [],          // failed flights [{seed, depth, path}] — all shown on their layout
+  drag: null,
+  preview: null,
+  previewPower: 0,     // 0..1 drag power fraction (drives aim-line color + squash)
+  particles: [],
+  floats: [],          // floating score/assist text
+  grazed: null,        // per-planet assist flags for current flight
+  minGateDist: 1e9,
+  bestBeaten: false,   // this run has set a new best (drives gold HUD + seed reroll)
+  satsRun: 0,          // satellites banked this run (scoreboard counter)
+  satPunchAt: 0,       // scoreboard satellite pop timer
+  scorePunchAt: 0,
+  shake: 0,
+  flash: 0,
+  winAt: 0,
+  deadAt: 0,           // tap-guard: ignore restart taps for 350ms after death
+  deadMsg: '',
+  endT: 0,             // flight-time at which the last flight ended (freezes orbiters)
+  partUnlocked: null,  // base part earned this run (shown on the death screen)
+  hintsDone: false,    // onboarding hints vanish after the first fling of the session
+  zips: [],            // slingshot rewards in transit: burst -> comet -> score punch
+  grazesThisFlight: 0, // slingshots banked this flight (death-screen receipt)
+  wormSparks: [],      // cosmetic infalling sparks for the wormhole
+  ambient: null,       // rare background flyby (comet/voyager/ufo/asteroid/galaxy)
+  sysLoadAt: 0,
+  orb: { base: 0, at: 0 },  // orbit clock: base + wall since 'at' (rebased at flight end)
+  splashAt: 0,         // biome-transition splash screen timer
+  freezeT: 0,          // signature-animation time frozen during flight
+};
+
+function loadSystem(depth) {
+  // any slingshot reward still in transit lands now — banked is banked
+  game.zips.forEach(() => { game.score += 1; addCareer(1); });
+  game.zips = [];
+  game.sys = PLAYGROUND ? playgroundSystem(depth) : genSystem(depth, game.runSeed);
+  game.depth = depth;
+  game.state = 'aim';
+  game.craft = { x: PAD.x, y: PAD.y, vx: 0, vy: 0, t: 0 };
+  game.trail = [];
+  game.flightPath = [];
+  game.drag = null;
+  game.preview = null;
+  game.previewPower = 0;
+  game.grazed = game.sys.layout.planets.map(() => false);
+  game.minGateDist = 1e9;
+  game.endT = 0;
+  game.solDemo = null;
+  // pick a y-band for the onboarding hints that no planet (or its orbiters) crosses
+  game.hintY = (() => {
+    for (const fy of [0.60, 0.50, 0.68, 0.42, 0.30]) {
+      const hy = VH * fy;
+      const clear = game.sys.layout.planets.every((p, i) => {
+        let reach = p.r;
+        for (const o of game.sys.layout.moons) if (o.pi === i) reach = Math.max(reach, o.orbR + o.r);
+        for (const o of game.sys.layout.sats) if (o.pi === i) reach = Math.max(reach, o.orbR + o.r);
+        return p.y + reach < hy - 20 || p.y - reach > hy + 34;
+      });
+      if (clear) return hy;
+    }
+    return VH * 0.60;
+  })();
+  game.wormSparks = [];
+  for (let i = 0; i < 14; i++)
+    game.wormSparks.push({ a: Math.random() * Math.PI * 2, r: Math.random(), sp: 0.7 + Math.random() * 0.7 });
+  // vortex stream rails, seeded so retries look identical
+  const wrng = mulberry32((game.runSeed ^ Math.imul(depth, 977)) >>> 0);
+  game.wormArms = [];
+  for (let i = 0; i < 9; i++)
+    game.wormArms.push({ a0: (i / 9) * Math.PI * 2 + wrng() * 0.5, ph: wrng(), lite: i % 3 === 0 });
+  game.sysLoadAt = performance.now();
+  game.orb = { base: 0, at: performance.now() };
+  game.ambient = null;
+  // two categories of background specials, biome-flavored: naturals appear
+  // regularly, unnaturals (man-made / alien) are the rare treat
+  const ab = biomeFor(depth).ambient;
+  const roll = Math.random();
+  let type = null;
+  if (roll < ab.pNat) {
+    type = ab.naturals[Math.floor(Math.random() * ab.naturals.length)];
+  } else if (roll < ab.pNat + ab.pUnnat) {
+    type = ab.unnaturals[Math.floor(Math.random() * ab.unnaturals.length)];
+  }
+  if (type === 'galaxy') {
+    game.ambient = { type, x: 60 + Math.random() * (VW - 120), y: 140 + Math.random() * 300, rot: Math.random() * 7 };
+  } else if (type) {
+    const fromLeft = Math.random() < 0.5;
+    const speed = { comet: 14, asteroid: 8, voyager: 6, ufo: 16, satellite: 7 }[type];
+    game.ambient = {
+      type,
+      x: fromLeft ? -30 : VW + 30,
+      y: 120 + Math.random() * 380,
+      vx: (fromLeft ? 1 : -1) * speed,
+      vy: (Math.random() - 0.5) * speed * 0.4,
+    };
+  }
+}
+
+function newRun() {
+  // in-transit slingshot rewards: the run's score dies with it, career keeps them
+  game.zips.forEach(() => addCareer(1));
+  game.zips = [];
+  game.partUnlocked = null;
+  // Course persistence (D-adr-014): retries replay the same course so deaths are
+  // learnable (and the ghost trail lines up); a new-best run earns fresh territory.
+  if (game.bestBeaten) game.runSeed = (Date.now() & 0xffffffff) >>> 0;
+  game.bestBeaten = false;
+  // Ghosts are this run's story only. The course may replay (same seed until a
+  // new best), but a fresh hangar starts visually clean — without this, prior
+  // runs' trails reappear on every repeated system.
+  game.ghosts = [];
+  game.lives = 5;
+  game.score = 0;
+  game.dispScore = 0;
+  game.satsRun = 0;
+  loadSystem(1);
+}
+
+function dragVelocity(d) {
+  const dpr = Math.min(window.devicePixelRatio || 1, 3);
+  const dx = (d.sx - d.cx) / (scale / dpr), dy = (d.sy - d.cy) / (scale / dpr);
+  const len = Math.hypot(dx, dy);
+  if (len < 14) return null;
+  const v = Math.min(MIN_V + (MAX_V - MIN_V) * (len / DRAG_FULL), MAX_V);
+  return { vx: (dx / len) * v, vy: (dy / len) * v };
+}
+
+// current orbit-phase time: what the orbiters' clocks read right now
+function orbNow() { return game.orb.base + (performance.now() - game.orb.at) / 1000; }
+
+function fling(vx, vy) {
+  game.lastShot = { vx, vy };
+  // capture the orbit phase at launch: flight physics continues it seamlessly
+  game.craft = { x: PAD.x, y: PAD.y, vx, vy, t: 0, t0: orbNow() };
+  game.trail = [];
+  game.flightPath = [PAD.x, PAD.y];
+  game.state = 'flight';
+  game.drag = null;
+  game.preview = null;
+  game.previewPower = 0;
+  game.grazed = game.sys.layout.planets.map(() => false);
+  game.minGateDist = 1e9;
+  game.gateLock = false;              // entry tell: latches true once the path is a hit
+  game.sys.layout.sats.forEach(s => { s.got = false; });
+  game.satsThisFlight = 0;
+  game.grazesThisFlight = 0;
+  game.hintsDone = true;
+  game.freezeT = performance.now() / 1000;   // signature motion freezes in flight
+  sfx.launch();
+}
+
+function endRun(byCrash, x, y) {
+  game.state = 'dead';
+  game.lives--;                       // a ship is lost; retry same system if any remain
+  game.deadAt = performance.now();
+  game.endT = game.craft.t;
+  // orbit clock resumes live exactly where flight physics left it — no jump
+  game.orb = { base: game.craft.t0 + game.craft.t, at: performance.now() };
+  game.ghosts.push({ seed: game.runSeed, depth: game.depth, path: game.flightPath.slice() });
+  const here = game.ghosts.filter(g2 => g2.seed === game.runSeed && g2.depth === game.depth);
+  if (here.length > 5) game.ghosts.splice(game.ghosts.indexOf(here[0]), 1);
+  if (game.ghosts.length > 40) game.ghosts.shift();
+  const g = game.sys.layout.gate;
+  const nearMiss = game.minGateDist < g.r + 80;
+  game.deadMsg = nearMiss ? 'SO CLOSE' : (byCrash ? 'CRASHED' : 'LOST IN SPACE');
+  if (game.lives <= 0) {
+    // run over: reveal the proof. Every system is verified solvable (D-adr-006),
+    // so show it — the winning trajectory, its telemetry, and a demo flight home.
+    const s = game.sys.sol;
+    game.solDemo = { vx: s.vx, vy: s.vy, at: performance.now(),
+                     path: simulate(game.sys.layout, s.vx, s.vy, 6).path };
+  }
+  if (byCrash) {
+    game.shake = 8;
+    for (let i = 0; i < 18; i++) {
+      const th = Math.random() * Math.PI * 2, sp = 60 + Math.random() * 220;
+      game.particles.push({ x, y, vx: Math.cos(th) * sp, vy: Math.sin(th) * sp, life: 0.55 });
+    }
+    sfx.crash();
+  } else {
+    sfx.lost();
+  }
+  saveBest();
+}
+
+function escapeGate() {
+  const assists = game.grazed.filter(Boolean).length;
+  const points = 1;                  // slingshots banked in-flight (D-adr-021)
+  game.score += points;
+  addCareer(points);
+  game.scorePunchAt = performance.now();
+  game.state = 'win';
+  game.winAt = performance.now();
+  game.endT = game.craft.t;
+  game.orb = { base: game.craft.t0 + game.craft.t, at: performance.now() };
+  // the entry dive inherits the exact arrival state — continuity by construction.
+  // Heading starts at the same BLENDED angle the flight draw was showing (the
+  // pre-horizon lean), so the nose cannot snap at the state switch.
+  const gw0 = game.sys.layout.gate;
+  const c0 = game.craft;
+  const spd0 = Math.hypot(c0.vx, c0.vy);
+  let ang0 = Math.atan2(c0.vy, c0.vx);
+  const adx0 = gw0.x - c0.x, ady0 = gw0.y - c0.y;
+  const ad0 = Math.hypot(adx0, ady0);
+  const wgt0 = Math.max(0, Math.min(1 - (ad0 - gw0.r) / (gw0.r * 1.4), 0.9))
+             * Math.min((performance.now() / 1000 - game.gateLockAt) / 0.35, 1);
+  const ta0 = Math.atan2(ady0, adx0);
+  ang0 += (((ta0 - ang0 + Math.PI * 3) % (Math.PI * 2)) - Math.PI) * wgt0;
+  game.winCraft = { x: c0.x, y: c0.y, vx: Math.cos(ang0) * spd0, vy: Math.sin(ang0) * spd0,
+                    d0: Math.max(ad0, gw0.r * 0.5) };
+  game.winDone = false;
+  const g = game.sys.layout.gate;
+  game.floats.push({
+    x: g.x, y: g.y - g.r - 14,
+    txt: '+' + PT + (assists ? '  ·  ' + assists + ' SLINGSHOT' + (assists > 1 ? 'S' : '') + ' BANKED' : ''),
+    vy: -34, life: 1.1, size: assists ? 24 : 19, color: assists ? '#ffd166' : '#e8f0ff',
+  });
+  const isNewBest = saveBest();
+  if (isNewBest && !game.bestBeaten) {   // fire the moment BEST falls, mid-run
+    game.bestBeaten = true;
+    game.floats.push({ x: VW / 2, y: 110, txt: 'NEW BEST!', vy: -20, life: 1.4, size: 26, color: '#ffd166' });
+  }
+  sfx.escape(isNewBest);
+}
+
+// ---------- input ----------
+canvas.addEventListener('pointerdown', e => {
+  e.preventDefault();
+  audio();                                    // unlock iOS audio on first gesture
+  if (game.state === 'aim') {
+    game.drag = { sx: e.clientX, sy: e.clientY, cx: e.clientX, cy: e.clientY };
+  } else if (game.state === 'splash' && performance.now() - game.splashAt > 300) {
+    game.state = 'aim';
+  } else if (game.state === 'dead' && performance.now() - game.deadAt > 350) {
+    // 350ms guard: a panic-tap from gameplay shouldn't skip the score.
+    // Ships left -> retry the same system (ghost shows your last path);
+    // hangar empty -> full new run.
+    if (game.lives > 0) loadSystem(game.depth);
+    else newRun();
+  }
+});
+window.addEventListener('pointermove', e => {
+  if (game.state !== 'aim' || !game.drag) return;
+  game.drag.cx = e.clientX; game.drag.cy = e.clientY;
+  const v = dragVelocity(game.drag);
+  if (v) {
+    game.preview = simulate(game.sys.layout, v.vx, v.vy, previewT(game.depth), orbNow()).path;
+    game.previewPower = (Math.hypot(v.vx, v.vy) - MIN_V) / (MAX_V - MIN_V);
+    game.previewVel = v;
+  } else {
+    game.preview = null;
+    game.previewPower = 0;
+    game.previewVel = null;
+  }
+});
+window.addEventListener('pointerup', e => {
+  if (game.state !== 'aim' || !game.drag) return;
+  game.drag.cx = e.clientX; game.drag.cy = e.clientY;
+  const v = dragVelocity(game.drag);
+  game.drag = null; game.preview = null;
+  if (v) fling(v.vx, v.vy);
+});
+window.addEventListener('touchmove', e => e.preventDefault(), { passive: false });
+
+// ---------- tick ----------
+function tick(dt) {
+  if (game.state === 'flight') {
+    const c = game.craft, L = game.sys.layout;
+    const [ax, ay] = accel(c.x, c.y, L.planets, L.gscale);
+    c.vx += ax * dt; c.vy += ay * dt;
+    c.x += c.vx * dt; c.y += c.vy * dt;
+    c.t += dt;
+    game.trail.push(c.x, c.y);
+    if (game.trail.length > 400) game.trail.splice(0, 2);
+    game.flightPath.push(c.x, c.y);
+
+    for (let i = 0; i < L.planets.length; i++) {
+      const p = L.planets[i];
+      const dx = c.x - p.x, dy = c.y - p.y;
+      const d2 = dx * dx + dy * dy;
+      if (d2 < (p.r + CRAFT_R - 1) ** 2) { endRun(true, c.x, c.y); return; }
+      if (!game.grazed[i] && d2 < (p.r + ASSIST_MARGIN) ** 2) {
+        game.grazed[i] = true;
+        game.grazesThisFlight++;
+        // slingshot pays NOW (D-adr-021), staged per RESEARCH-SCORE-FX P1c:
+        // pop-and-hold at the graze -> comet travel -> banked on impact.
+        // Launches queue >=130ms apart so multi-grazes serialize (score-motor).
+        const lastZip = game.zips[game.zips.length - 1];
+        const zt0 = Math.max(performance.now(), lastZip ? lastZip.t0 + 130 : 0);
+        game.zipCount = (game.zipCount || 0) + 1;
+        game.zips.push({ x0: c.x, y0: c.y, t0: zt0, hold: 0.30, dur: 0.62,
+                         bend: (game.zipCount % 2 ? 1 : -1) * 110, seed: game.zipCount * 7 });
+        game.floats.push({ x: p.x, y: p.y - p.r - 12, txt: 'SLINGSHOT!', vy: -26, life: 0.8, size: 14, color: '#ffd166' });
+        sfx.assist(game.grazesThisFlight - 1);
+        if (game.grazesThisFlight === 3) {
+          // earned peak, once per flight (Peggle rule): brief world slow-mo
+          game.tripleAt = performance.now();
+          game.floats.push({ x: VW / 2, y: VH * 0.4, txt: 'TRIPLE SLINGSHOT!', vy: -18, life: 1.2, size: 24, color: '#ffd166' });
+        }
+      }
+    }
+    for (const m of L.moons) {
+      const [mx, my] = orbPos(L, m, c.t0 + c.t);
+      const dx = c.x - mx, dy = c.y - my;
+      if (dx * dx + dy * dy < (m.r + CRAFT_R - 1) ** 2) { endRun(true, c.x, c.y); return; }
+    }
+    for (const s of L.sats) {
+      if (s.got) continue;
+      const [sx, sy] = orbPos(L, s, c.t0 + c.t);
+      const dx = c.x - sx, dy = c.y - sy;
+      if (dx * dx + dy * dy < 16 * 16) {
+        s.got = true;
+        game.score += 1;
+        game.satsThisFlight = (game.satsThisFlight || 0) + 1;
+        game.satsRun++;
+        game.satPunchAt = performance.now();
+        addCareer(1);
+        game.scorePunchAt = performance.now();
+        game.floats.push({ x: sx, y: sy - 12, txt: '+' + PT + ' SAT', vy: -26, life: 0.9, size: 15, color: '#ffd166' });
+        sfx.assist();
+      }
+    }
+    const gdx = c.x - L.gate.x, gdy = c.y - L.gate.y;
+    const gd = Math.sqrt(gdx * gdx + gdy * gdy);
+    if (gd < game.minGateDist) game.minGateDist = gd;
+    if (gd < L.gate.r) { escapeGate(); return; }
+    if (c.x < BOUNDS.x0 || c.x > BOUNDS.x1 || c.y < BOUNDS.y0 || c.y > BOUNDS.y1 || c.t > MAX_FLIGHT) {
+      endRun(false, c.x, c.y); return;
+    }
+    // Entry tell: inside the lean ring, check whether this exact trajectory
+    // enters the gate. Latched — deterministic physics means a "yes" can never
+    // become a "no", so the rotation is a guarantee, not a hint.
+    if (!game.gateLock && gd < L.gate.r * 2.4 && willEnterGate(c, L)) {
+      game.gateLock = true;
+      game.gateLockAt = performance.now() / 1000;   // ramps the lean + slow-mo in
+    }
+  }
+  if (game.state === 'win' && game.winCraft && !game.winDone) {
+    const gw = game.sys.layout.gate, w = game.winCraft;
+    const dx = gw.x - w.x, dy = gw.y - w.y;
+    const d = Math.hypot(dx, dy) || 1;
+    if (d < gw.r * 0.12) game.winDone = true;
+    else {
+      const spd = Math.max(Math.hypot(w.vx, w.vy), 240) * (1 + 1.6 * dt);  // ramp inward
+      w.vx += (dx / d * spd - w.vx) * Math.min(10 * dt, 1);                 // steer, don't stop
+      w.vy += (dy / d * spd - w.vy) * Math.min(10 * dt, 1);
+      w.x += w.vx * dt; w.y += w.vy * dt;
+    }
+  }
+  if (game.state === 'win' &&
+      ((game.winDone && performance.now() - game.winAt > 450) || performance.now() - game.winAt > 1400)) {
+    game.flash = 1;                       // the flash is now *emerging* into the new system
+    const prevBiome = biomeFor(game.depth);
+    loadSystem(game.depth + 1);
+    if (biomeFor(game.depth) !== prevBiome) {   // crossed into a new biome: splash
+      game.state = 'splash';
+      game.splashAt = performance.now();
+    }
+  }
+  // splash waits for a tap — no auto-dismiss
+
+  // live preview: orbiters never stop, so a held drag's drawn future must track them
+  if (game.state === 'aim' && game.drag && game.previewVel)
+    game.preview = simulate(game.sys.layout, game.previewVel.vx, game.previewVel.vy, previewT(game.depth), orbNow()).path;
+
+  // slingshot rewards land — at most ONE bank per frame (serialized ticks,
+  // pinball score-motor style) with a streak pitch-ladder + punch escalation
+  for (let i = 0; i < game.zips.length; i++) {
+    const z = game.zips[i];
+    if ((performance.now() - z.t0) / 1000 >= z.hold + z.dur) {
+      game.zips.splice(i, 1);
+      game.score += 1;
+      addCareer(1);
+      const nb = performance.now();
+      game.bankStreak = nb - (game.lastBankAt || -1e9) < 2000 ? (game.bankStreak || 0) + 1 : 0;
+      game.lastBankAt = nb;
+      game.scorePunchAt = nb;
+      game.punchPeak = Math.min(1.45 + 0.08 * game.bankStreak, 1.7);
+      game.landRingAt = nb;
+      game.barFlashAt = nb;
+      sfx.bank(game.bankStreak);
+      break;
+    }
+  }
+
+  if (game.dispScore < game.score)     // count-up: tick toward the real score
+    game.dispScore = Math.min(game.score, game.dispScore + Math.max(4, (game.score - game.dispScore) * 6) * dt);
+
+  for (let i = game.particles.length - 1; i >= 0; i--) {
+    const p = game.particles[i];
+    p.x += p.vx * dt; p.y += p.vy * dt; p.life -= dt;
+    if (p.life <= 0) game.particles.splice(i, 1);
+  }
+  for (let i = game.floats.length - 1; i >= 0; i--) {
+    const f = game.floats[i];
+    f.y += f.vy * dt; f.life -= dt;
+    if (f.life <= 0) game.floats.splice(i, 1);
+  }
+  if (game.shake > 0) game.shake = Math.max(0, game.shake - 60 * dt);
+  if (game.flash > 0) game.flash = Math.max(0, game.flash - 2.2 * dt);
+}
+
+// ---------- renderers ----------
+// E3 stylized planet modes (D-adr-023): the render mode IS the biome identity.
+// Invariant: the planet edge stays the strongest edge on screen in every mode.
+function drawPlanetStylized(p, pm, cols) {
+  const { x, y, r, type, detail } = p;
+  ctx.save();
+  if (pm.mode === 'flat2') {         // papercut: flat tone + hard chord terminator
+    if (type === 'saturn') {
+      ctx.save();
+      ctx.translate(x, y); ctx.rotate(-0.45 + detail * 0.35); ctx.scale(1, 0.32);
+      ctx.strokeStyle = 'rgba(217,195,145,0.55)'; ctx.lineWidth = r * 0.26;
+      ctx.beginPath(); ctx.arc(0, 0, r * 1.55, Math.PI, Math.PI * 2); ctx.stroke();
+      ctx.restore();
+    }
+    ctx.fillStyle = lerpColor(cols[1], pm.tint || '#b98a4e', 0.35);
+    ctx.beginPath(); ctx.arc(x, y, r, 0, 7); ctx.fill();
+    ctx.save();
+    ctx.beginPath(); ctx.arc(x, y, r, 0, 7); ctx.clip();
+    ctx.translate(x, y); ctx.rotate(0.52);
+    ctx.fillStyle = 'rgba(0,0,0,0.28)';
+    ctx.fillRect(r * 0.15, -r * 1.2, r * 1.2, r * 2.4);
+    ctx.restore();
+    if (type === 'saturn') {
+      ctx.save();
+      ctx.translate(x, y); ctx.rotate(-0.45 + detail * 0.35); ctx.scale(1, 0.32);
+      ctx.strokeStyle = 'rgba(230,210,160,0.65)'; ctx.lineWidth = r * 0.26;
+      ctx.beginPath(); ctx.arc(0, 0, r * 1.55, 0, Math.PI); ctx.stroke();
+      ctx.restore();
+    }
+  } else if (pm.mode === 'ink') {    // sumi-e: near-black body, dry-brush outline
+    ctx.fillStyle = '#0c0a14';
+    ctx.beginPath(); ctx.arc(x, y, r, 0, 7); ctx.fill();
+    ctx.strokeStyle = 'rgba(205,190,255,0.65)'; ctx.lineWidth = 1.8;
+    const s0 = detail * 7;
+    for (const [a0, a1] of [[s0, s0 + 1.9], [s0 + 2.2, s0 + 3.9], [s0 + 4.2, s0 + 5.6]]) {
+      ctx.beginPath(); ctx.arc(x, y, r, a0, a1); ctx.stroke();
+    }
+    ctx.strokeStyle = 'rgba(205,190,255,0.15)'; ctx.lineWidth = 1.2;
+    ctx.beginPath(); ctx.arc(x, y, r * 0.62, s0 + 1, s0 + 3.4); ctx.stroke();
+    if (type === 'saturn') {
+      ctx.save();
+      ctx.translate(x, y); ctx.rotate(-0.45 + detail * 0.35); ctx.scale(1, 0.32);
+      ctx.strokeStyle = 'rgba(205,190,255,0.35)'; ctx.lineWidth = 1.6;
+      ctx.beginPath(); ctx.arc(0, 0, r * 1.55, 0, 7); ctx.stroke();
+      ctx.restore();
+    }
+  } else if (pm.mode === 'wire') {   // blueprint: rim + meridians, nothing rendered
+    ctx.fillStyle = '#0b0b10';
+    ctx.beginPath(); ctx.arc(x, y, r, 0, 7); ctx.fill();
+    ctx.strokeStyle = 'rgba(170,180,205,0.55)'; ctx.lineWidth = 1.4;
+    ctx.beginPath(); ctx.arc(x, y, r, 0, 7); ctx.stroke();
+    ctx.strokeStyle = 'rgba(170,180,205,0.25)'; ctx.lineWidth = 1;
+    for (const xs of [0.45, 0.8]) {
+      ctx.save(); ctx.translate(x, y); ctx.scale(xs, 1);
+      ctx.beginPath(); ctx.arc(0, 0, r, 0, 7); ctx.stroke();
+      ctx.restore();
+    }
+    ctx.save(); ctx.translate(x, y); ctx.scale(1, 0.35);
+    ctx.globalAlpha = 0.12;
+    ctx.beginPath(); ctx.arc(0, 0, r, 0, 7); ctx.stroke();
+    ctx.restore();
+    if (type === 'saturn') {
+      ctx.save();
+      ctx.translate(x, y); ctx.rotate(-0.45 + detail * 0.35); ctx.scale(1, 0.32);
+      ctx.strokeStyle = 'rgba(170,180,205,0.3)'; ctx.lineWidth = 1.4;
+      ctx.beginPath(); ctx.arc(0, 0, r * 1.55, 0, 7); ctx.stroke();
+      ctx.restore();
+    }
+  } else if (pm.mode === 'eclipse') { // the lens: rim-lit toward the unseen center
+    ctx.fillStyle = '#060410';
+    ctx.beginPath(); ctx.arc(x, y, r, 0, 7); ctx.fill();
+    const dir = Math.atan2(-240 - y, VW / 2 - x);
+    ctx.strokeStyle = 'rgba(160,120,255,0.6)'; ctx.lineWidth = 1.6;
+    ctx.beginPath(); ctx.arc(x, y, r, dir - 1.75, dir + 1.75); ctx.stroke();
+    ctx.strokeStyle = 'rgba(160,120,255,0.15)'; ctx.lineWidth = 1.2;
+    ctx.beginPath(); ctx.arc(x, y, r, dir + Math.PI - 1.0, dir + Math.PI + 1.0); ctx.stroke();
+    if (type === 'saturn') {
+      ctx.save();
+      ctx.translate(x, y); ctx.rotate(-0.45 + detail * 0.35); ctx.scale(1, 0.32);
+      ctx.strokeStyle = 'rgba(160,120,255,0.2)'; ctx.lineWidth = 1.4;
+      ctx.beginPath(); ctx.arc(0, 0, r * 1.55, 0, 7); ctx.stroke();
+      ctx.restore();
+    }
+  }
+  ctx.restore();
+}
+
+function drawPlanet(p) {
+  const { x, y, r, type, detail } = p;
+  // every world is a variant: detail tints the base gradient lighter or darker,
+  // so even a repeated type never looks like a copy
+  const tint = (detail - 0.5) * 0.36;
+  let cols = PLANET_COLORS[type].map(c => lerpColor(c, tint > 0 ? '#ffffff' : '#000000', Math.abs(tint)));
+  // biome planet treatment (E3): stylized modes take over entirely; duotone and
+  // underlit re-tint and continue through the natural pipeline
+  const pm = biomeFor(game.depth).planetMode || null;
+  if (pm && (pm.mode === 'ink' || pm.mode === 'wire' || pm.mode === 'flat2' || pm.mode === 'eclipse')) {
+    drawPlanetStylized(p, pm, cols);
+    return;
+  }
+  if (pm && pm.mode === 'duotone') cols = cols.map(c => lerpColor(c, pm.hex, pm.k));
+  if (pm && pm.mode === 'underlit') cols = cols.map(c => lerpColor(c, '#3a1610', 0.25));
+  ctx.save();
+
+  if (type === 'saturn') {           // ring: back half behind the body
+    ctx.save();
+    ctx.translate(x, y); ctx.rotate(-0.45 + detail * 0.35); ctx.scale(1, 0.32);
+    ctx.strokeStyle = 'rgba(217,195,145,0.6)';
+    ctx.lineWidth = r * 0.30;
+    ctx.beginPath(); ctx.arc(0, 0, r * 1.55, Math.PI, Math.PI * 2); ctx.stroke();
+    ctx.restore();
+  }
+
+  const grad = pm && pm.mode === 'underlit'
+    ? ctx.createRadialGradient(x + r * 0.2, y + r * 0.55, r * 0.1, x, y, r)   // lit by the lava below
+    : ctx.createRadialGradient(x - r * 0.35, y - r * 0.4, r * 0.1, x, y, r);
+  grad.addColorStop(0, cols[0]); grad.addColorStop(0.55, cols[1]); grad.addColorStop(1, cols[2]);
+  ctx.fillStyle = grad;
+  ctx.beginPath(); ctx.arc(x, y, r, 0, 7); ctx.fill();
+
+  ctx.beginPath(); ctx.arc(x, y, r, 0, 7); ctx.clip();
+  if (type === 'jupiter' || type === 'saturn') {
+    const bands = type === 'jupiter'
+      ? ['rgba(160,100,50,0.5)', 'rgba(240,220,180,0.45)', 'rgba(140,85,45,0.5)', 'rgba(230,200,150,0.4)']
+      : ['rgba(200,160,100,0.4)', 'rgba(245,230,190,0.4)', 'rgba(180,140,90,0.35)'];
+    const offs = [-0.55, -0.18, 0.18, 0.55];
+    for (let i = 0; i < bands.length; i++) {
+      ctx.fillStyle = bands[i];
+      ctx.fillRect(x - r, y + offs[i] * r - 0.09 * r, 2 * r, 0.18 * r);
+    }
+    if (type === 'jupiter') {         // great red spot
+      ctx.fillStyle = 'rgba(176,66,31,0.85)';
+      ctx.beginPath(); ctx.ellipse(x + r * 0.3, y + r * 0.28, r * 0.22, r * 0.13, 0, 0, 7); ctx.fill();
+    }
+  } else if (type === 'earth') {
+    ctx.fillStyle = 'rgba(47,158,82,0.85)';
+    for (const [bx, by, br] of [[-0.35, -0.1, 0.32], [0.3, 0.32, 0.26], [0.15, -0.45, 0.2]]) {
+      ctx.beginPath(); ctx.arc(x + bx * r, y + by * r, br * r, 0, 7); ctx.fill();
+    }
+  } else if (type === 'mercury') {
+    ctx.fillStyle = 'rgba(40,36,34,0.3)';
+    for (const [bx, by, br] of [[-0.3, -0.2, 0.18], [0.25, 0.1, 0.13], [-0.05, 0.4, 0.11], [0.4, -0.35, 0.09]]) {
+      ctx.beginPath(); ctx.arc(x + bx * r, y + by * r, br * r, 0, 7); ctx.fill();
+    }
+  }
+  // duotone accents (E3): caustics (Shallows), ice facets (Shelf), hatching (Rust)
+  if (pm && pm.caustic) {
+    ctx.strokeStyle = 'rgba(200,245,240,0.12)'; ctx.lineWidth = 2;
+    ctx.beginPath(); ctx.arc(x, y, r * 0.88, -2.4, -1.2); ctx.stroke();
+  }
+  if (pm && pm.facets) {
+    ctx.strokeStyle = 'rgba(230,250,255,0.10)'; ctx.lineWidth = r * 0.12;
+    for (const fa of [-0.52, -0.17, 0.26]) {
+      ctx.save(); ctx.translate(x, y); ctx.rotate(fa);
+      ctx.beginPath(); ctx.moveTo(-r * 0.9, -r * 0.45); ctx.lineTo(r * 0.5, -r * 0.45); ctx.stroke();
+      ctx.restore();
+    }
+  }
+  if (pm && pm.hatch) {
+    ctx.save(); ctx.translate(x, y); ctx.rotate(Math.PI / 4);
+    ctx.strokeStyle = 'rgba(0,0,0,0.22)'; ctx.lineWidth = 1;
+    ctx.beginPath();
+    for (let d = -r; d <= r; d += 5) { ctx.moveTo(-r * 1.2, d); ctx.lineTo(r * 1.2, d); }
+    ctx.stroke();
+    ctx.restore();
+    ctx.fillStyle = 'rgba(255,170,120,0.15)';
+    for (const [rx2, ry2] of [[-0.35, -0.3], [-0.1, -0.5], [0.15, -0.25]]) {
+      ctx.beginPath(); ctx.arc(x + rx2 * r, y + ry2 * r, 1.2, 0, 7); ctx.fill();
+    }
+  }
+  // soft limb shading (darkens the far rim; the forge flips it — dark on TOP)
+  const sh = pm && pm.mode === 'underlit'
+    ? ctx.createRadialGradient(x + r * 0.2, y + r * 0.55, r * 0.1, x, y, r * 1.02)
+    : ctx.createRadialGradient(x - r * 0.45, y - r * 0.5, r * 0.1, x, y, r * 1.02);
+  sh.addColorStop(0, 'rgba(0,0,0,0)');
+  sh.addColorStop(0.62, 'rgba(0,0,0,0)');
+  sh.addColorStop(0.85, 'rgba(0,0,0,0.14)');
+  sh.addColorStop(1, 'rgba(0,0,0,0.34)');
+  ctx.fillStyle = sh;
+  ctx.beginPath(); ctx.arc(x, y, r, 0, 7); ctx.fill();
+  ctx.restore();
+  if (pm && pm.mode === 'underlit') {
+    // lava rim light on the bottom limb — sells the forge AND guarantees the
+    // collision edge stays the strongest edge on the darkest coals
+    ctx.strokeStyle = 'rgba(255,140,80,0.4)'; ctx.lineWidth = 1.6;
+    ctx.beginPath(); ctx.arc(x, y, r - 0.5, Math.PI * 0.2, Math.PI * 0.8); ctx.stroke();
+  }
+
+  if (type === 'saturn') {           // ring: front half over the body
+    ctx.save();
+    ctx.translate(x, y); ctx.rotate(-0.45 + detail * 0.35); ctx.scale(1, 0.32);
+    ctx.strokeStyle = 'rgba(230,210,160,0.75)';
+    ctx.lineWidth = r * 0.30;
+    ctx.beginPath(); ctx.arc(0, 0, r * 1.55, 0, Math.PI); ctx.stroke();
+    ctx.restore();
+  }
+}
+
+function drawGate(g, now) {
+  const { x, y, r } = g;
+  // VORTEX STREAMS (docs/WORMHOLE-RESEARCH.md): no disc, no ring — thin spiral
+  // rails with light-beads pouring inward, speeding up as they fall (1/r cue).
+  // The rails converge on the win zone; no separate halo marker (Mike's call).
+  // dark throat
+  const throat = ctx.createRadialGradient(x, y, 0, x, y, r * 0.52);
+  throat.addColorStop(0, '#0a0616');
+  throat.addColorStop(0.6, 'rgba(27,16,64,0.8)');
+  throat.addColorStop(1, 'rgba(27,16,64,0)');
+  ctx.fillStyle = throat;
+  ctx.beginPath(); ctx.arc(x, y, r * 0.52, 0, 7); ctx.fill();
+  ctx.lineCap = 'round';
+  const rot = now * 0.22;                          // whole vortex precesses slowly
+  for (const a of game.wormArms) {
+    // faint continuous rail: spiral from 1.5r down to 0.16r
+    ctx.beginPath();
+    for (let s = 0; s <= 12; s++) {
+      const u = s / 12;
+      const rad = r * (1.5 - 1.34 * u);
+      const ang = a.a0 + rot + u * 2.7;
+      const px = x + Math.cos(ang) * rad, py = y + Math.sin(ang) * rad;
+      if (s) ctx.lineTo(px, py); else ctx.moveTo(px, py);
+    }
+    ctx.strokeStyle = 'rgba(138,108,240,0.16)';
+    ctx.lineWidth = 1;
+    ctx.stroke();
+    // beads pouring inward along the rail, brightening as they fall
+    ctx.fillStyle = a.lite ? 'rgb(205,180,255)' : 'rgb(150,120,240)';
+    for (let k = 0; k < 11; k++) {
+      const u = (k / 11 + a.ph + now * 0.16) % 1;
+      const rad = r * (1.5 - 1.34 * u);
+      const ang = a.a0 + rot + u * 2.7;
+      ctx.globalAlpha = 0.2 + 0.55 * u;
+      ctx.beginPath();
+      ctx.arc(x + Math.cos(ang) * rad, y + Math.sin(ang) * rad, 1.9 - 0.6 * u, 0, 7);
+      ctx.fill();
+    }
+  }
+  ctx.globalAlpha = 1;
+  // infalling sparks spiraling toward the core
+  ctx.fillStyle = '#e6dcff';
+  for (const sp of game.wormSparks) {
+    const f = 1 - ((now * 0.10 * sp.sp + sp.r) % 1);
+    const rad = r * (0.14 + 0.8 * f);
+    const ang = sp.a + now * sp.sp * 2.2 + (1 - f) * 2.6;
+    ctx.globalAlpha = 0.2 + 0.55 * (1 - f);
+    ctx.beginPath(); ctx.arc(x + Math.cos(ang) * rad, y + Math.sin(ang) * rad, 1.5, 0, 7); ctx.fill();
+  }
+  ctx.globalAlpha = 1;
+  // pulsing hot core
+  const core = ctx.createRadialGradient(x, y, 0, x, y, r * 0.24);
+  core.addColorStop(0, 'rgba(255,255,255,' + (0.5 + 0.3 * Math.sin(now * 2.4)) + ')');
+  core.addColorStop(0.5, 'rgba(190,160,255,0.35)');
+  core.addColorStop(1, 'rgba(190,160,255,0)');
+  ctx.fillStyle = core;
+  ctx.beginPath(); ctx.arc(x, y, r * 0.24, 0, 7); ctx.fill();
+}
+
+function drawMoon(mx, my, r) {
+  const g = ctx.createRadialGradient(mx - r * 0.3, my - r * 0.35, r * 0.15, mx, my, r);
+  g.addColorStop(0, '#c9c5c1'); g.addColorStop(0.6, '#8d8985'); g.addColorStop(1, '#4a4744');
+  ctx.fillStyle = g;
+  ctx.beginPath(); ctx.arc(mx, my, r, 0, 7); ctx.fill();
+  ctx.fillStyle = 'rgba(40,38,36,0.35)';
+  ctx.beginPath(); ctx.arc(mx - r * 0.25, my + r * 0.15, r * 0.3, 0, 7); ctx.fill();
+  ctx.beginPath(); ctx.arc(mx + r * 0.3, my - r * 0.25, r * 0.2, 0, 7); ctx.fill();
+}
+
+function drawSat(sx, sy, now) {
+  ctx.save();
+  ctx.translate(sx, sy);
+  ctx.rotate(now * 0.6);
+  // solar panel wings with cell grid
+  ctx.fillStyle = '#2f5fd4';
+  ctx.fillRect(-11, -2.5, 7, 5); ctx.fillRect(4, -2.5, 7, 5);
+  ctx.strokeStyle = 'rgba(255,255,255,0.5)'; ctx.lineWidth = 0.7;
+  ctx.strokeRect(-11, -2.5, 7, 5); ctx.strokeRect(4, -2.5, 7, 5);
+  ctx.beginPath();
+  ctx.moveTo(-7.5, -2.5); ctx.lineTo(-7.5, 2.5);
+  ctx.moveTo(7.5, -2.5); ctx.lineTo(7.5, 2.5);
+  ctx.stroke();
+  // gold bus = reward color
+  ctx.fillStyle = '#ffd166';
+  ctx.shadowColor = '#ffd166'; ctx.shadowBlur = 8 + 4 * Math.sin(now * 5);
+  ctx.fillRect(-3.5, -3.5, 7, 7);
+  ctx.shadowBlur = 0;
+  // comms dish
+  ctx.strokeStyle = '#e8ecf0'; ctx.lineWidth = 1;
+  ctx.beginPath(); ctx.arc(0, -6.5, 3, Math.PI * 0.15, Math.PI * 0.85, true); ctx.stroke();
+  // antenna with blinking beacon
+  ctx.beginPath(); ctx.moveTo(0, 3.5); ctx.lineTo(0, 8); ctx.stroke();
+  ctx.globalAlpha = Math.sin(now * 6) > 0 ? 0.95 : 0.25;
+  ctx.fillStyle = '#ff9d8a';
+  ctx.beginPath(); ctx.arc(0, 9, 1.2, 0, 7); ctx.fill();
+  ctx.restore();
+}
+
+// Gravity Golf — space station renderer. 16 build stages, one function, no state.
+// stage = completed stages (0..16), now = seconds, s = scale (0.5 HUD / 1.8 death / 3 splash).
+function drawStation(ctx, cx, cy, s, stage, now) {
+  ctx.save();
+  ctx.translate(cx, cy); ctx.scale(s, s);
+  ctx.lineJoin = 'round'; ctx.lineCap = 'round';
+  if (stage <= 0) {                                   // survey ghost: nothing built yet
+    ctx.strokeStyle = 'rgba(143,162,200,0.4)'; ctx.lineWidth = 1;
+    ctx.setLineDash([3, 3]);
+    ctx.beginPath(); ctx.ellipse(0, 3, 22, 9, -0.15, 0, 7); ctx.stroke();
+    ctx.beginPath(); ctx.moveTo(-13, 0); ctx.lineTo(13, 0);
+    ctx.moveTo(0, -8); ctx.lineTo(0, 9); ctx.stroke();
+    ctx.setLineDash([]); ctx.restore(); return;
+  }
+  const steel = (x0, y0, x1, y1) => {                 // shared stainless-hull gradient
+    const g = ctx.createLinearGradient(x0, y0, x1, y1);
+    g.addColorStop(0, '#eef2f5'); g.addColorStop(0.5, '#aeb8c0'); g.addColorStop(1, '#59636c');
+    return g;
+  };
+  const strut = (x0, y0, x1, y1) => {
+    ctx.strokeStyle = '#8b959e'; ctx.lineWidth = 1.2;
+    ctx.beginPath(); ctx.moveTo(x0, y0); ctx.lineTo(x1, y1); ctx.stroke();
+  };
+  const box = (x, y, w, h, fill) => {
+    ctx.fillStyle = fill || '#96a0a9'; ctx.fillRect(x, y, w, h);
+    ctx.strokeStyle = 'rgba(20,26,36,0.55)'; ctx.lineWidth = 0.6; ctx.strokeRect(x, y, w, h);
+  };
+  const port = (x, y, lit) => {                       // porthole (lit = desaturated warm-white)
+    ctx.fillStyle = lit ? 'rgba(255,236,200,0.9)' : '#39414a';
+    ctx.beginPath(); ctx.arc(x, y, 1.1, 0, 7); ctx.fill();
+  };
+  const navLight = (x, y, hz, ph) => {                // blinking red-orange = warning register
+    ctx.globalAlpha = Math.sin(now * hz + ph) > 0.25 ? 0.95 : 0.18;
+    ctx.fillStyle = '#ff9d8a';
+    ctx.beginPath(); ctx.arc(x, y, 1.1, 0, 7); ctx.fill();
+    ctx.globalAlpha = 1;
+  };
+
+  if (stage >= 10) {                                  // 10 HABITAT RING (behind everything)
+    ctx.strokeStyle = 'rgba(91,141,217,0.9)'; ctx.lineWidth = 2;
+    ctx.beginPath(); ctx.ellipse(0, 3, 30, 11, -0.15, 0, 7); ctx.stroke();
+    ctx.fillStyle = 'rgba(232,240,255,0.6)';          // circulating cabin lights = slow rotation
+    for (let k = 0; k < 6; k++) {
+      const a = now * 0.25 + k * Math.PI / 3;
+      const ex = Math.cos(a) * 30, ey = Math.sin(a) * 11;
+      ctx.beginPath();
+      ctx.arc(ex * 0.989 + ey * 0.149, -ex * 0.149 + ey * 0.989 + 3, 0.9, 0, 7);
+      ctx.fill();
+    }
+  }
+  const tx = stage >= 9 ? 27 : 17;                    // 1 TRUSS SPINE / 9 RADIATOR TRUSS extends it
+  ctx.strokeStyle = '#8b959e'; ctx.lineWidth = 1;
+  ctx.beginPath();
+  ctx.moveTo(-tx, -1.4); ctx.lineTo(tx, -1.4);
+  ctx.moveTo(-tx, 1.4); ctx.lineTo(tx, 1.4);
+  for (let x = -tx; x <= tx - 3; x += 3) { ctx.moveTo(x, 1.4); ctx.lineTo(x + 3, -1.4); }
+  ctx.stroke();
+  if (stage === 1) box(-2.5, -2.5, 5, 5);             // bare assembly node until the core arrives
+  if (stage >= 9) {                                   // radiator fins above the truss tips
+    ctx.fillStyle = '#c9d2da';
+    for (const d of [-1, 1]) {
+      ctx.save(); ctx.translate(d * 23.5, -1.4); ctx.rotate(d * 0.3);
+      ctx.fillRect(-1.1, -8.5, 2.2, 8.5); ctx.fillRect(d * 3.2 - 1.1, -7, 2.2, 7);
+      ctx.restore();
+    }
+  }
+  const wing = (wx) => {                              // 3/6 SOLAR ARRAYS: twin panels, panel blue
+    strut(wx, -4, wx, 4);
+    ctx.fillStyle = '#2f5fd4';
+    ctx.fillRect(wx - 2.8, -15, 5.6, 11); ctx.fillRect(wx - 2.8, 4, 5.6, 11);
+    ctx.strokeStyle = 'rgba(255,255,255,0.45)'; ctx.lineWidth = 0.7;
+    ctx.strokeRect(wx - 2.8, -15, 5.6, 11); ctx.strokeRect(wx - 2.8, 4, 5.6, 11);
+    ctx.beginPath();
+    ctx.moveTo(wx, -15); ctx.lineTo(wx, -4); ctx.moveTo(wx, 4); ctx.lineTo(wx, 15);
+    for (const yy of [-11.3, -7.7, 7.7, 11.3]) { ctx.moveTo(wx - 2.8, yy); ctx.lineTo(wx + 2.8, yy); }
+    ctx.stroke();
+  };
+  if (stage >= 3) wing(-14);
+  if (stage >= 6) wing(14);
+  if (stage >= 14) {                                  // 14 SHIPYARD GANTRY: open slipway frame
+    strut(13, -1.4, 16, -9);
+    ctx.strokeStyle = '#8b959e'; ctx.lineWidth = 1;
+    ctx.strokeRect(15, -17, 13, 8);
+    ctx.beginPath();
+    ctx.moveTo(19.3, -17); ctx.lineTo(19.3, -9);
+    ctx.moveTo(23.6, -17); ctx.lineTo(23.6, -9);
+    ctx.stroke();
+    ctx.fillStyle = steel(18, -15, 18, -11.4);        // hull under construction inside
+    ctx.fillRect(17.5, -14.6, 6.5, 3.2);
+    ctx.beginPath(); ctx.moveTo(24, -14.6); ctx.lineTo(26.5, -13); ctx.lineTo(24, -11.4);
+    ctx.closePath(); ctx.fill();
+  }
+  if (stage >= 8) {                                   // 8 SCIENCE LAB, port side of the stack
+    strut(-4, 10, -7, 10);
+    box(-13, 7.5, 6.5, 5);
+    ctx.fillStyle = '#2f5fd4'; ctx.fillRect(-12, 8.6, 1.6, 2.8);
+    port(-8.4, 10, true);
+  }
+  if (stage >= 12) {                                  // 12 CARGO BAY, starboard side
+    strut(4, 10, 7, 10);
+    box(7, 7.5, 5.5, 4.2); box(7, 12.5, 4.6, 4.2, '#7f8a93');
+  }
+  if (stage >= 15) {                                  // 15 FUEL FARM: tank spheres under port truss
+    strut(-24, 1.4, -24, 4.8);
+    for (const [fx, fy, fr] of [[-24, 7.2, 2.6], [-19.6, 9.4, 2]]) {
+      const g = ctx.createRadialGradient(fx - fr * 0.35, fy - fr * 0.4, fr * 0.15, fx, fy, fr);
+      g.addColorStop(0, '#eef2f5'); g.addColorStop(0.55, '#aeb8c0'); g.addColorStop(1, '#59636c');
+      ctx.fillStyle = g;
+      ctx.beginPath(); ctx.arc(fx, fy, fr, 0, 7); ctx.fill();
+    }
+  }
+  if (stage >= 5) {                                   // 5 HAB MODULE below the core
+    ctx.fillStyle = steel(-4.5, 0, 4.5, 0);
+    ctx.fillRect(-4.5, 6.5, 9, 9.5);
+    ctx.strokeStyle = 'rgba(20,26,36,0.55)'; ctx.lineWidth = 0.6;
+    ctx.strokeRect(-4.5, 6.5, 9, 9.5);
+    port(-2, 10.5, false); port(2, 10.5, true); port(0, 13.5, stage >= 7);
+  }
+  if (stage >= 7) {                                   // 7 DOCKING PORT + approach strobes
+    ctx.fillStyle = '#7f8a93';
+    ctx.beginPath(); ctx.moveTo(-4, 16); ctx.lineTo(4, 16); ctx.lineTo(2.6, 19.5); ctx.lineTo(-2.6, 19.5);
+    ctx.closePath(); ctx.fill();
+    ctx.strokeStyle = '#c9d2da'; ctx.lineWidth = 1;
+    ctx.beginPath(); ctx.ellipse(0, 20, 2.6, 1.1, 0, 0, 7); ctx.stroke();
+    navLight(-4.6, 17.5, 4, 0); navLight(4.6, 17.5, 4, Math.PI);
+  }
+  if (stage >= 2) {                                   // 2 CORE MODULE
+    ctx.fillStyle = steel(0, -7, 0, 7);
+    ctx.beginPath(); ctx.arc(0, 0, 7, 0, 7); ctx.fill();
+    port(-2.5, -1, false); port(2.5, -1, stage >= 5);
+  }
+  if (stage >= 13) {                                  // 13 OBSERVATORY: cupola on the core's shoulder
+    strut(-5, -4.5, -7, -6.5);
+    ctx.fillStyle = 'rgba(205,220,240,0.8)';
+    ctx.beginPath(); ctx.arc(-7.5, -7, 2.6, 0, 7); ctx.fill();
+    ctx.strokeStyle = '#8b959e'; ctx.lineWidth = 0.8;
+    ctx.beginPath(); ctx.arc(-7.5, -7, 2.6, 0, 7); ctx.stroke();
+    ctx.beginPath(); ctx.moveTo(-9.2, -8.7); ctx.lineTo(-11.5, -11); ctx.stroke();
+  }
+  if (stage >= 4) {                                   // 4 COMMS MAST + dish (taller once beacon tops it)
+    ctx.strokeStyle = '#8b959e'; ctx.lineWidth = 1;
+    ctx.beginPath();
+    ctx.moveTo(0, -6.5); ctx.lineTo(0, stage >= 16 ? -23 : -18);
+    ctx.moveTo(-2.2, -11.5); ctx.lineTo(2.2, -11.5);
+    ctx.moveTo(0, -13.5); ctx.lineTo(-3.8, -14.8);
+    ctx.stroke();
+    ctx.fillStyle = '#c9d2da';
+    ctx.beginPath(); ctx.arc(-5, -15.5, 3.4, 0.7, 4.4); ctx.fill();
+  }
+  if (stage >= 11) {                                  // 11 DEFENSE GRID: sentry pods on the truss
+    for (const d of [-1, 1]) {
+      box(d * 20 - 1.8, 1.4, 3.6, 2.6, '#7f8a93');
+      ctx.fillStyle = '#59636c';
+      ctx.beginPath(); ctx.arc(d * 20, 1.4, 1.6, Math.PI, 0); ctx.fill();
+      navLight(d * 20, 5.4, 2.6, d * 1.3);
+    }
+  }
+  if (stage >= 16) {                                  // 16 STAR BEACON: gold = reward register only
+    const p = 0.55 + 0.45 * Math.sin(now * 2.5);
+    ctx.strokeStyle = '#8b959e'; ctx.lineWidth = 1;
+    ctx.beginPath(); ctx.moveTo(-1.6, -23); ctx.lineTo(1.6, -23); ctx.stroke();
+    ctx.globalAlpha = 0.35 + 0.6 * p;
+    ctx.fillStyle = '#ffd166';
+    ctx.shadowColor = '#ffd166'; ctx.shadowBlur = 5 + 4 * p;
+    ctx.beginPath(); ctx.arc(0, -24.8, 1.9, 0, 7); ctx.fill();
+    ctx.shadowBlur = 0; ctx.globalAlpha = 1;
+  }
+  ctx.restore();
+}
+
+function drawAmbient(now) {
+  const a = game.ambient;
+  if (!a) return;
+  // every biome gets its own variants: shapes and tints derive from the biome
+  // index, so a Rust Belt asteroid never looks like an Ice Shelf one
+  const bio = biomeFor(game.depth);
+  const vb = BIOMES.indexOf(bio);
+  const hue = bio.decor.hues[0];                       // biome accent 'r,g,b'
+  const hueHex = '#' + hue.split(',').map(n => (+n).toString(16).padStart(2, '0')).join('');
+  const vrng = mulberry32((vb * 2971 + 7) >>> 0);      // stable per-biome dice
+  const t = (performance.now() - game.sysLoadAt) / 1000;
+  ctx.save();
+  if (a.type === 'galaxy') {
+    const arms = 2 + vb % 3;
+    ctx.translate(a.x, a.y);
+    ctx.rotate(a.rot + now * 0.04);
+    ctx.scale(1, 0.7 + vrng() * 0.3);
+    ctx.strokeStyle = 'rgba(' + hue + ',0.10)';
+    ctx.lineWidth = 3.5 + vrng() * 2;
+    for (let k = 0; k < arms; k++) {
+      ctx.beginPath();
+      ctx.arc(0, 0, 7 + k * (16 / arms + 2), k * (6.28 / arms), k * (6.28 / arms) + 3.1);
+      ctx.stroke();
+    }
+    const g = ctx.createRadialGradient(0, 0, 0, 0, 0, 7);
+    g.addColorStop(0, 'rgba(255,245,230,0.22)'); g.addColorStop(1, 'rgba(255,245,230,0)');
+    ctx.fillStyle = g;
+    ctx.beginPath(); ctx.arc(0, 0, 7, 0, 7); ctx.fill();
+    ctx.restore(); return;
+  }
+  const x = a.x + a.vx * t, y = a.y + a.vy * t;
+  if (x < -60 || x > VW + 60) { ctx.restore(); return; }
+  ctx.globalAlpha = 0.55;
+  if (a.type === 'comet') {
+    // tail takes the biome tint; hotter biomes get longer, split tails
+    const len = 34 + (vb % 3) * 12;
+    const dx = -a.vx / Math.hypot(a.vx, a.vy), dy = -a.vy / Math.hypot(a.vx, a.vy);
+    for (const [spread, al] of (vb >= 6 ? [[0, 0.5], [0.22, 0.28]] : [[0, 0.5]])) {
+      const tx = dx * Math.cos(spread) - dy * Math.sin(spread);
+      const ty = dx * Math.sin(spread) + dy * Math.cos(spread);
+      const tg = ctx.createLinearGradient(x, y, x + tx * len, y + ty * len);
+      tg.addColorStop(0, 'rgba(' + hue + ',' + al + ')');
+      tg.addColorStop(1, 'rgba(' + hue + ',0)');
+      ctx.strokeStyle = tg; ctx.lineWidth = 3; ctx.lineCap = 'round';
+      ctx.beginPath(); ctx.moveTo(x, y); ctx.lineTo(x + tx * len, y + ty * len); ctx.stroke();
+    }
+    ctx.fillStyle = '#dceeff';
+    ctx.beginPath(); ctx.arc(x, y, 2 + (vb % 3) * 0.5, 0, 7); ctx.fill();
+  } else if (a.type === 'asteroid') {
+    // lump count, size, tint and tumble rate all vary by biome
+    ctx.translate(x, y); ctx.rotate(now * (0.3 + vb * 0.06));
+    ctx.fillStyle = lerpColor('#6e6a66', hueHex, 0.22);
+    const lumps = 3 + Math.floor(vrng() * 2);
+    ctx.beginPath();
+    for (let k = 0; k < lumps; k++) {
+      const la = vrng() * 6.28, ld = vrng() * 3.5, lr = 2.5 + vrng() * 2.8;
+      ctx.moveTo(Math.cos(la) * ld + lr, Math.sin(la) * ld);
+      ctx.arc(Math.cos(la) * ld, Math.sin(la) * ld, lr, 0, 7);
+    }
+    ctx.fill();
+  } else if (a.type === 'voyager') {
+    // the old probe, aged differently in each region
+    ctx.translate(x, y);
+    ctx.rotate(vrng() * 0.6 - 0.3);
+    const boom = 10 + (vb % 3) * 3;
+    ctx.strokeStyle = '#c9d2da'; ctx.lineWidth = 1;
+    ctx.beginPath(); ctx.moveTo(-boom * 0.6, 2); ctx.lineTo(boom * 0.4, -2); ctx.stroke();
+    ctx.fillStyle = '#96a0a9'; ctx.fillRect(-2, -2, 4, 4);
+    ctx.beginPath(); ctx.arc(3, -3, 2.8 + (vb % 2), 0, 7);
+    ctx.strokeStyle = '#e8ecf0'; ctx.stroke();
+  } else if (a.type === 'ufo') {
+    // intelligent craft: hover-then-dart every ~2.4s; three distinct alien
+    // vessel designs rotate by biome, all piloted by the classic grey
+    const beat = 2.4, step = Math.floor(now / beat);
+    const h = (st, k) => { const v = Math.sin(st * 127.1 + k * 311.7) * 43758.545; return v - Math.floor(v); };
+    const f = Math.min((now / beat - step) / 0.22, 1);
+    const ease = 1 - Math.pow(1 - f, 3);
+    const ox2 = ((h(step - 1, 1) - 0.5) + (h(step, 1) - h(step - 1, 1)) * ease) * 90;
+    const oy2 = ((h(step - 1, 2) - 0.5) + (h(step, 2) - h(step - 1, 2)) * ease) * 46;
+    ctx.translate(x + ox2, y + oy2 + Math.sin(now * 2.2) * 3);
+    ctx.rotate(Math.sin(now * 1.3) * 0.06 + (h(step, 1) - h(step - 1, 1)) * (1 - f) * 0.5);
+    ctx.globalAlpha = 0.65;
+    const design = vb % 3;
+    const alien = (ax, ay, s2) => {
+      ctx.fillStyle = '#b5d9bd';
+      ctx.beginPath(); ctx.ellipse(ax, ay, 2.2 * s2, 2.7 * s2, 0, 0, 7); ctx.fill();
+      ctx.fillStyle = '#101418';
+      ctx.beginPath(); ctx.ellipse(ax - s2, ay + 0.2 * s2, 0.8 * s2, 1.1 * s2, 0.5, 0, 7); ctx.fill();
+      ctx.beginPath(); ctx.ellipse(ax + s2, ay + 0.2 * s2, 0.8 * s2, 1.1 * s2, -0.5, 0, 7); ctx.fill();
+    };
+    if (design === 0) {
+      // classic saucer: glass dome + pilot, stainless disc, chasing gold lights
+      ctx.fillStyle = 'rgba(160,235,255,0.5)';
+      ctx.beginPath(); ctx.arc(0, -3.2, 5.2, Math.PI, 0); ctx.fill();
+      alien(0, -5.4, 1);
+      const sg = ctx.createLinearGradient(0, -3, 0, 4);
+      sg.addColorStop(0, '#c9d2da'); sg.addColorStop(1, '#59636c');
+      ctx.fillStyle = sg;
+      ctx.beginPath(); ctx.ellipse(0, 0, 14, 4.6, 0, 0, 7); ctx.fill();
+      for (let k = 0; k < 4; k++) {
+        ctx.globalAlpha = (Math.floor(now * 4) % 4) === k ? 0.9 : 0.25;
+        ctx.fillStyle = '#ffd166';
+        ctx.beginPath(); ctx.arc(-9.5 + k * 6.3, 2, 1.1, 0, 7); ctx.fill();
+      }
+    } else if (design === 1) {
+      // dark tri-craft: swept delta hull, biome-tinted corner lights, canopy
+      ctx.fillStyle = '#2a2f3a';
+      ctx.beginPath();
+      ctx.moveTo(0, -7); ctx.lineTo(12, 4.5); ctx.quadraticCurveTo(0, 8.5, -12, 4.5);
+      ctx.closePath(); ctx.fill();
+      ctx.strokeStyle = 'rgba(' + hue + ',0.6)'; ctx.lineWidth = 1;
+      ctx.stroke();
+      ctx.fillStyle = 'rgba(160,235,255,0.45)';
+      ctx.beginPath(); ctx.arc(0, 0.5, 3.6, Math.PI, 0); ctx.fill();
+      alien(0, -1.1, 0.8);
+      const pts = [[0, -6], [10.5, 4], [-10.5, 4]];
+      for (let k = 0; k < 3; k++) {
+        ctx.globalAlpha = (Math.floor(now * 3) % 3) === k ? 0.95 : 0.25;
+        ctx.fillStyle = 'rgb(' + hue + ')';
+        ctx.beginPath(); ctx.arc(pts[k][0], pts[k][1], 1.2, 0, 7); ctx.fill();
+      }
+    } else {
+      // ring-ship: open torus with a central glass pod, orbit shimmer, strobes
+      ctx.strokeStyle = '#7f8a93'; ctx.lineWidth = 2.4;
+      ctx.beginPath(); ctx.ellipse(0, 0, 13, 5, 0, 0, 7); ctx.stroke();
+      ctx.strokeStyle = 'rgba(' + hue + ',0.5)'; ctx.lineWidth = 1;
+      ctx.beginPath(); ctx.ellipse(0, 0, 13, 5, 0, now * 1.5, now * 1.5 + 1.4); ctx.stroke();
+      ctx.fillStyle = 'rgba(160,235,255,0.5)';
+      ctx.beginPath(); ctx.arc(0, -1, 4.2, 0, 7); ctx.fill();
+      alien(0, -1.4, 0.9);
+      for (const d of [-1, 1]) {
+        ctx.globalAlpha = Math.sin(now * 5 + d) > 0 ? 0.9 : 0.2;
+        ctx.fillStyle = 'rgb(' + hue + ')';
+        ctx.beginPath(); ctx.arc(d * 13, 0, 1.1, 0, 7); ctx.fill();
+      }
+    }
+    ctx.globalAlpha = 0.55;
+  } else if (a.type === 'satellite') {
+    // derelict hardware: rig layout and panel tint vary by region
+    ctx.translate(x, y); ctx.rotate(now * (0.25 + (vb % 3) * 0.12));
+    const panel = lerpColor('#3a5c9c', hueHex, 0.3);
+    ctx.fillStyle = '#59636c';
+    ctx.fillRect(-2.5, -4, 5, 8);
+    ctx.fillStyle = panel;
+    if (vb % 2) {
+      ctx.fillRect(-13, -2, 8, 4); ctx.fillRect(5, -2, 8, 4);
+    } else {
+      ctx.fillRect(-11, -5, 6, 3.4); ctx.fillRect(-11, 1.6, 6, 3.4);
+      ctx.fillRect(5, -5, 6, 3.4); ctx.fillRect(5, 1.6, 6, 3.4);
+    }
+    ctx.strokeStyle = '#96a0a9'; ctx.lineWidth = 1;
+    ctx.beginPath();
+    ctx.moveTo(-5, 0); ctx.lineTo(-2.5, 0);
+    ctx.moveTo(2.5, 0); ctx.lineTo(5, 0);
+    ctx.stroke();
+    if (vb % 3 === 0) { ctx.beginPath(); ctx.arc(0, -6.5, 2.6, Math.PI * 0.1, Math.PI * 0.9, true); ctx.stroke(); }
+    else { ctx.beginPath(); ctx.moveTo(0, -4); ctx.lineTo(0, -9); ctx.stroke(); }
+  }
+  ctx.restore();
+}
+
+function drawShip(x, y, ang, thrust, now, squash) {
+  ctx.save();
+  ctx.translate(x, y); ctx.rotate(ang);
+  if (squash) ctx.scale(1 - squash, 1 + squash);  // loaded-spring anticipation on drag
+  if (thrust) {
+    const len = 11 + Math.sin(now * 43) * 2 + Math.random() * 3;
+    const fg = ctx.createLinearGradient(-12, 0, -12 - len, 0);
+    fg.addColorStop(0, 'rgba(255,220,120,0.95)');
+    fg.addColorStop(0.5, 'rgba(255,130,40,0.8)');
+    fg.addColorStop(1, 'rgba(255,60,20,0)');
+    ctx.fillStyle = fg;
+    ctx.beginPath();
+    ctx.moveTo(-11, -3.2); ctx.lineTo(-12 - len, 0); ctx.lineTo(-11, 3.2);
+    ctx.closePath(); ctx.fill();
+  }
+  // rear flaps
+  ctx.fillStyle = '#96a0a9';
+  ctx.beginPath(); ctx.moveTo(-11.5, -4); ctx.lineTo(-15.5, -8.5); ctx.lineTo(-6.5, -4.2); ctx.closePath(); ctx.fill();
+  ctx.beginPath(); ctx.moveTo(-11.5, 4); ctx.lineTo(-15.5, 8.5); ctx.lineTo(-6.5, 4.2); ctx.closePath(); ctx.fill();
+  // stainless body + nose
+  ctx.shadowColor = 'rgba(200,230,255,0.8)'; ctx.shadowBlur = 8;
+  const bg = ctx.createLinearGradient(0, -4.5, 0, 4.5);
+  bg.addColorStop(0, '#eef2f5'); bg.addColorStop(0.45, '#aeb8c0'); bg.addColorStop(1, '#59636c');
+  ctx.fillStyle = bg;
+  ctx.beginPath();
+  ctx.moveTo(-12, -4.5);
+  ctx.lineTo(8, -4.5);
+  ctx.quadraticCurveTo(14.5, -2.6, 16.5, 0);
+  ctx.quadraticCurveTo(14.5, 2.6, 8, 4.5);
+  ctx.lineTo(-12, 4.5);
+  ctx.closePath(); ctx.fill();
+  ctx.shadowBlur = 0;
+  // forward canards
+  ctx.fillStyle = '#8b959e';
+  ctx.beginPath(); ctx.moveTo(6, -4.3); ctx.lineTo(3.5, -7); ctx.lineTo(9.5, -4.4); ctx.closePath(); ctx.fill();
+  ctx.beginPath(); ctx.moveTo(6, 4.3); ctx.lineTo(3.5, 7); ctx.lineTo(9.5, 4.4); ctx.closePath(); ctx.fill();
+  ctx.restore();
+}
+
+// Biome signature touches — layer-1 background flourishes (STYLE-GUIDE §1).
+// Per-speck randomness is seeded from depth so retries look identical; sigT is
+// frozen during flight so nothing background moves while the ship does.
+// E2: per-biome sky particle families (bubbles/snow/ash/spores/plankton/flecks).
+// Deterministic per biome; motion rides sigT so it freezes during flight.
+function drawSkyExtras(b, sigT, dim) {
+  const mode = b.skyMode;
+  if (!mode || mode === 'squares' || mode === 'streaks') return;  // glyph modes live in the star loop
+  const rng = mulberry32((BIOMES.indexOf(b) * 2477 + 991) >>> 0);
+  if (mode === 'bubbles') {
+    for (let i = 0; i < 10; i++) {
+      const x0 = rng() * VW, y0 = rng() * VH, r = 1 + rng() * 1.5, a = 0.06 + rng() * 0.08, ph = rng() * 7;
+      ctx.strokeStyle = 'rgba(180,235,230,' + (a * dim).toFixed(3) + ')';
+      ctx.lineWidth = 0.8;
+      ctx.beginPath();
+      ctx.arc(x0 + Math.sin(sigT + ph) * 4, ((y0 - sigT * 12) % VH + VH) % VH, r, 0, 7);
+      ctx.stroke();
+    }
+  } else if (mode === 'snow') {
+    ctx.fillStyle = 'rgb(220,240,255)';
+    for (let i = 0; i < 16; i++) {
+      const x0 = rng() * VW, y0 = rng() * VH, r = 0.8 + rng() * 0.8, a = 0.06 + rng() * 0.06, ph = rng() * 7;
+      ctx.globalAlpha = a * dim;
+      ctx.beginPath();
+      ctx.arc(x0 + Math.sin(sigT * 0.7 + ph) * 5, (y0 + sigT * 9) % VH, r, 0, 7);
+      ctx.fill();
+    }
+  } else if (mode === 'ash' || mode === 'ashLight') {
+    ctx.fillStyle = 'rgb(150,140,135)';
+    for (let i = 0; i < (mode === 'ash' ? 12 : 8); i++) {
+      const x0 = rng() * VW, y0 = rng() * VH, ph = rng() * 7;
+      ctx.globalAlpha = 0.07 * dim;
+      ctx.beginPath();
+      ctx.arc(x0 + Math.sin(sigT * 0.4 + ph) * 3, (y0 + sigT * 5) % VH, 0.8 + rng() * 0.6, 0, 7);
+      ctx.fill();
+    }
+  } else if (mode === 'spores') {
+    ctx.fillStyle = 'rgb(140,255,180)';
+    for (let i = 0; i < 10; i++) {
+      const x0 = rng() * VW, y0 = rng() * VH, ph = rng() * 7;
+      ctx.globalAlpha = 0.05 * dim;
+      ctx.beginPath();
+      ctx.arc(x0 + Math.sin(sigT * 0.5 + ph) * 6, ((y0 - sigT * 4) % VH + VH) % VH, 2 + rng(), 0, 7);
+      ctx.fill();
+    }
+  } else if (mode === 'plankton') {
+    ctx.fillStyle = 'rgb(255,130,150)';
+    for (let i = 0; i < 12; i++) {
+      const x0 = rng() * VW, y0 = rng() * VH, ph = rng() * 7;
+      ctx.globalAlpha = (0.06 + rng() * 0.04) * dim;
+      ctx.beginPath();
+      ctx.arc(x0 + Math.sin(sigT * 0.35 + ph) * 9, y0 + Math.cos(sigT * 0.3 + ph) * 6, 0.8 + rng() * 0.6, 0, 7);
+      ctx.fill();
+    }
+  } else if (mode === 'flecks') {
+    ctx.fillStyle = 'rgb(190,170,255)';
+    for (let i = 0; i < 20; i++) {
+      ctx.globalAlpha = (0.04 + rng() * 0.06) * dim;
+      ctx.beginPath(); ctx.arc(rng() * VW, rng() * VH * 0.9, 0.4 + rng() * 0.5, 0, 7); ctx.fill();
+    }
+  }
+  ctx.globalAlpha = 1;
+}
+
+// E4: silhouette scenery — fills darker than the bg (zero luminance cost, so
+// variety here is free). Frame-hugging only: bottom/top bands or <=90px from
+// the side edges, never inside the central corridor (|x-VW/2|<130, y 170-650).
+function drawScenery(b, sigT) {
+  const sc = b.scenery;
+  if (!sc) return;
+  const rng = mulberry32((BIOMES.indexOf(b) * 5501 + 77) >>> 0);
+  ctx.save();
+  if (sc === 'cape') {              // warm dusk band melting into the ground glow
+    const g = ctx.createLinearGradient(0, VH - 90, 0, VH);
+    g.addColorStop(0, 'rgba(255,190,130,0)'); g.addColorStop(1, 'rgba(255,190,130,0.05)');
+    ctx.fillStyle = g;
+    ctx.fillRect(0, VH - 90, VW, 90);
+  } else if (sc === 'kelp') {       // ribbon columns hugging the side edges
+    ctx.fillStyle = '#04100f';
+    for (let i = 0; i < 3; i++) {
+      const left = i !== 1;
+      const bx = left ? 12 + rng() * 40 : VW - 12 - rng() * 40;
+      const w = 14 + rng() * 12, top = VH * (0.45 + rng() * 0.1);
+      const lean = (left ? 1 : -1) * (20 + rng() * 25);
+      ctx.beginPath();
+      ctx.moveTo(bx - w / 2, VH);
+      ctx.quadraticCurveTo(bx - w / 2 + lean * 0.4, (VH + top) / 2, bx + lean - 2, top);
+      ctx.lineTo(bx + lean + 2, top + 6);
+      ctx.quadraticCurveTo(bx + w / 2 + lean * 0.4, (VH + top) / 2, bx + w / 2, VH);
+      ctx.closePath(); ctx.fill();
+      for (let k = 0; k < 3; k++) {  // leaf blades
+        const ly = top + 40 + k * 60 + rng() * 20, lx = bx + lean * (1 - k * 0.25);
+        ctx.beginPath();
+        ctx.ellipse(lx + (left ? 14 : -14), ly, 16, 4.5, (left ? -0.5 : 0.5), 0, 7);
+        ctx.fill();
+      }
+    }
+  } else if (sc === 'inkblooms') {  // two vast ink blooms behind everything
+    for (const [fx, fy] of [[0.3, 0.3], [0.75, 0.6]]) {
+      const r = 180 + rng() * 40;
+      const g = ctx.createRadialGradient(VW * fx, VH * fy, 0, VW * fx, VH * fy, r);
+      g.addColorStop(0, 'rgba(150,110,220,0.05)'); g.addColorStop(1, 'rgba(150,110,220,0)');
+      ctx.fillStyle = g;
+      ctx.beginPath(); ctx.arc(VW * fx, VH * fy, r, 0, 7); ctx.fill();
+    }
+  } else if (sc === 'stalactites') {  // hanging ice along the top edge
+    ctx.fillStyle = '#060d18';
+    for (let i = 0; i < 8; i++) {
+      const x = 10 + (i + rng() * 0.6) * (VW - 20) / 8;
+      const w = 14 + rng() * 20, h = 20 + rng() * 35;
+      ctx.beginPath();
+      ctx.moveTo(x - w / 2, 0); ctx.lineTo(x - 3 + rng() * 2, h); ctx.lineTo(x + w / 2, 0);
+      ctx.closePath(); ctx.fill();
+    }
+  } else if (sc === 'canopy') {     // leaf clusters + vines + the colossal frond
+    ctx.fillStyle = '#02090a';
+    const blob = (bx, by, n, sr) => {
+      ctx.beginPath();
+      for (let k = 0; k < n; k++) ctx.arc(bx + (rng() - 0.5) * sr * 2.2, by + (rng() - 0.5) * sr * 1.4, sr * (0.5 + rng() * 0.5), 0, 7);
+      ctx.fill();
+    };
+    blob(20, 30, 7, 30);                        // top-left cluster
+    blob(VW - 15, VH * 0.5, 6, 26);             // right-edge cluster
+    ctx.strokeStyle = '#02090a'; ctx.lineWidth = 3;
+    for (let k = 0; k < 3; k++) {               // vines
+      const vx = k < 2 ? 30 + k * 30 : VW - 20;
+      const vy = k < 2 ? 40 : VH * 0.52;
+      ctx.beginPath(); ctx.moveTo(vx, vy);
+      ctx.quadraticCurveTo(vx + 20 - k * 15, vy + 60, vx - 10 + rng() * 20, vy + 100 + rng() * 30);
+      ctx.stroke();
+    }
+    ctx.beginPath();                            // the frond, bottom-left, iconic
+    ctx.moveTo(8, VH - 20);
+    ctx.quadraticCurveTo(30, VH - 120, 66, VH - 185);
+    ctx.quadraticCurveTo(34, VH - 120, 16, VH - 20);
+    ctx.closePath(); ctx.fill();
+    for (let k = 0; k < 5; k++) {
+      const u = 0.25 + k * 0.16;
+      const px2 = 8 + 58 * u, py2 = VH - 20 - 165 * u;
+      ctx.beginPath();
+      ctx.ellipse(px2 + 18, py2 - 4, 20 - k * 2.5, 5 - k * 0.5, -0.6 - u * 0.3, 0, 7);
+      ctx.fill();
+    }
+  } else if (sc === 'dunesea') {    // layered ridge silhouettes + the caravan
+    const fills = ['#0b0705', '#080503', '#060302'];
+    const ridgeY = [0.62, 0.72, 0.82];
+    for (let i = 0; i < 3; i++) {
+      const cy2 = VH * ridgeY[i] + 800, cx2 = VW / 2 + (i - 1) * 120 + rng() * 40;
+      ctx.fillStyle = fills[i];
+      ctx.beginPath(); ctx.arc(cx2, cy2, 800, 0, 7); ctx.fill();
+    }
+    ctx.fillStyle = '#040302';                  // the caravan on the middle ridge
+    const my2 = VH * 0.72, mx0 = VW * 0.6;
+    for (let k = 0; k < 5; k++) {
+      const kx = mx0 + k * (20 + rng() * 8);
+      const ky = my2 - Math.pow((kx - VW / 2 - rng() * 40) / 800, 2) * 800 - 3;
+      ctx.beginPath(); ctx.arc(kx, ky, 1.6 + rng() * 0.6, 0, 7); ctx.fill();
+    }
+  } else if (sc === 'gantries') {   // smog bands + edge gantries + pulsing beacon
+    for (const fy of [0.30, 0.55]) {
+      const g = ctx.createLinearGradient(0, VH * fy - 30, 0, VH * fy + 30);
+      g.addColorStop(0, 'rgba(255,150,90,0)'); g.addColorStop(0.5, 'rgba(255,150,90,0.04)'); g.addColorStop(1, 'rgba(255,150,90,0)');
+      ctx.fillStyle = g;
+      ctx.fillRect(0, VH * fy - 30, VW, 60);
+    }
+    ctx.strokeStyle = '#201009'; ctx.lineWidth = 2;
+    const jib = (x0, y0, dir) => {
+      ctx.beginPath();
+      ctx.moveTo(x0, y0); ctx.lineTo(x0 + dir * 80, y0);
+      for (let k = 1; k <= 3; k++) { ctx.moveTo(x0 + dir * k * 22, y0); ctx.lineTo(x0 + dir * k * 22, y0 - 12); }
+      ctx.moveTo(x0 + dir * 72, y0); ctx.lineTo(x0 + dir * 72, y0 + 26);   // the hook line
+      ctx.stroke();
+    };
+    jib(0, VH * 0.28, 1);
+    jib(VW, VH * 0.62, -1);
+    ctx.globalAlpha = Math.max(0, Math.sin(sigT * 2.6)) * 0.12;   // beacon, idle pulse
+    ctx.fillStyle = 'rgb(255,170,110)';
+    ctx.beginPath(); ctx.arc(80, VH * 0.28, 1.6, 0, 7); ctx.fill();
+    ctx.globalAlpha = 1;
+  } else if (sc === 'coral') {      // fans radiating from the frame's low corners
+    ctx.strokeStyle = '#0d0406'; ctx.lineWidth = 2; ctx.fillStyle = '#0d0406';
+    const fan = (x0, y0, dir, h) => {
+      const n = 5 + Math.floor(rng() * 3);
+      for (let k = 0; k < n; k++) {
+        const a = -Math.PI / 2 + dir * (0.15 + k * 0.18) * (rng() * 0.4 + 0.8);
+        const ex2 = x0 + Math.cos(a) * h * (0.7 + rng() * 0.3), ey2 = y0 + Math.sin(a) * h * (0.7 + rng() * 0.3);
+        ctx.beginPath();
+        ctx.moveTo(x0, y0);
+        ctx.quadraticCurveTo(x0 + Math.cos(a) * h * 0.5 + dir * 8, y0 + Math.sin(a) * h * 0.5, ex2, ey2);
+        ctx.stroke();
+        ctx.beginPath(); ctx.arc(ex2, ey2, 2.5, 0, 7); ctx.fill();
+      }
+    };
+    fan(14, VH - 8, 1, 120); fan(60, VH - 4, 1, 70);
+    fan(VW - 14, VH - 8, -1, 130); fan(VW - 55, VH - 4, -1, 65);
+    fan(4, VH * 0.5, 1, 40);
+  } else if (sc === 'grid') {       // drafting grid: the world is only plotted
+    ctx.strokeStyle = 'rgba(150,160,190,0.03)'; ctx.lineWidth = 1;
+    ctx.beginPath();
+    for (let x = 28; x < VW; x += 56) { ctx.moveTo(x, 0); ctx.lineTo(x, VH); }
+    for (let y = 28; y < VH; y += 56) { ctx.moveTo(0, y); ctx.lineTo(VW, y); }
+    ctx.stroke();
+  } else if (sc === 'forge') {      // molten horizon + volcano cones
+    const g = ctx.createLinearGradient(0, VH - 120, 0, VH - 50);
+    g.addColorStop(0, 'rgba(255,120,60,0)'); g.addColorStop(1, 'rgba(255,120,60,0.07)');
+    ctx.fillStyle = g;
+    ctx.fillRect(0, VH - 120, VW, 70);
+    ctx.fillStyle = '#0a0402';
+    for (let i = 0; i < 3; i++) {
+      const x = 40 + rng() * (VW - 80);
+      if (Math.abs(x - PAD.x) < 60) continue;
+      const w = 26 + rng() * 20, h = 14 + rng() * 12, y = groundYAt(x) + 2;
+      ctx.beginPath();
+      ctx.moveTo(x - w / 2, y); ctx.lineTo(x - 3, y - h); ctx.lineTo(x + 3, y - h); ctx.lineTo(x + w / 2, y);
+      ctx.closePath(); ctx.fill();
+    }
+  } else if (sc === 'contours') {   // spacetime rings around the unseen center
+    ctx.strokeStyle = 'rgba(150,110,255,0.045)'; ctx.lineWidth = 1.5;
+    for (const r of [300, 380, 470, 570]) {
+      ctx.beginPath(); ctx.arc(VW / 2, -240, r, 0, 7); ctx.stroke();
+    }
+  }
+  ctx.restore();
+}
+
+function drawSignature(b, depth, sigT, dim) {
+  const sig = b.signature;
+  if (!sig) return;
+  const rng = mulberry32((Math.imul(depth, 7919) + 13) >>> 0);
+  ctx.save();
+  ctx.globalAlpha = dim;
+  if (sig === 'homeGlow') {
+    const g = ctx.createRadialGradient(-30, VH + 30, 0, -30, VH + 30, 220);
+    g.addColorStop(0, 'rgba(255,200,140,0.05)'); g.addColorStop(1, 'rgba(255,200,140,0)');
+    ctx.fillStyle = g;
+    ctx.fillRect(0, VH - 260, 260, 260);
+  } else if (sig === 'godrays') {
+    // Shallows: light from the surface above — 3 swaying wedges (idle only)
+    ctx.fillStyle = 'rgba(140,220,220,0.04)';
+    for (let i = 0; i < 3; i++) {
+      const ax = [90, 210, 330][i] + Math.sin(sigT / 9 + i * 2.1) * 6;
+      const w = 50 + i * 15;
+      ctx.beginPath();
+      ctx.moveTo(ax, -4);
+      ctx.lineTo(ax - w / 2, 420); ctx.lineTo(ax + w / 2, 420);
+      ctx.closePath(); ctx.fill();
+    }
+  } else if (sig === 'enso') {
+    // Violet Deep: one giant broken ink circle — static, drawn once per frame
+    ctx.strokeStyle = 'rgba(160,120,255,0.05)';
+    ctx.lineWidth = 24;
+    ctx.beginPath(); ctx.arc(VW * 0.5, VH * 0.28, 170, Math.PI * 0.85, Math.PI * 0.85 + Math.PI * 1.61); ctx.stroke();
+  } else if (sig === 'aurora') {
+    // Ice Shelf: 3 vertical curtain strips swaying on slow sines (idle only)
+    for (let i = 0; i < 3; i++) {
+      const cx2 = VW * [0.2, 0.45, 0.7][i] + Math.sin(sigT / (5 + i) + i * 2) * 10;
+      const w = 30 + i * 5;
+      const g = ctx.createLinearGradient(0, 0, 0, 220);
+      g.addColorStop(0, 'rgba(120,230,220,0.05)'); g.addColorStop(1, 'rgba(120,230,220,0)');
+      ctx.fillStyle = g;
+      ctx.fillRect(cx2 - w / 2, 0, w, 220);
+    }
+  } else if (sig === 'fireflies') {
+    // Emerald Verge: 18 fireflies, two sizes, six of them wandering (idle only)
+    ctx.fillStyle = 'rgb(140,255,180)';
+    for (let i = 0; i < 18; i++) {
+      const fx = rng() * VW, fy = rng() * VH * 0.85, ph = rng() * 7, sp = 2 + rng();
+      const drift = i < 6 ? 20 : 0;
+      const r = i % 3 === 0 ? 1.1 : 0.6;
+      ctx.globalAlpha = (0.03 + 0.07 * Math.max(0, Math.sin(sigT * sp + ph))) * dim;
+      ctx.beginPath();
+      ctx.arc(fx + Math.sin(sigT * 0.25 + ph) * drift, fy + Math.cos(sigT * 0.2 + ph) * drift * 0.6, r, 0, 7);
+      ctx.fill();
+    }
+  } else if (sig === 'plumes') {
+    // Crimson Shoals: black-smoker columns inhaling (idle only)
+    for (const px of [0.22, 0.7]) {
+      for (let i = 0; i < 6; i++) {
+        const py = VH - 60 - i * 52;
+        const pr = (12 + i * 3.6) * (0.8 + 0.2 * Math.sin(sigT * 0.5 + i + px * 9));
+        ctx.fillStyle = 'rgba(255,110,140,0.05)';
+        ctx.beginPath(); ctx.arc(VW * px + Math.sin(sigT * 0.3 + i) * 4, py, pr, 0, 7); ctx.fill();
+      }
+    }
+  } else if (sig === 'dust') {
+    ctx.fillStyle = 'rgb(255,190,120)';
+    for (let i = 0; i < 14; i++) {
+      const dx = rng() * VW, dy0 = rng() * VH, a = 0.05 + rng() * 0.05, r = 0.5 + rng() * 0.6;
+      ctx.globalAlpha = a * dim;
+      ctx.beginPath(); ctx.arc(dx, (dy0 + sigT * 7) % VH, r, 0, 7); ctx.fill();
+    }
+  } else if (sig === 'rocks') {
+    ctx.fillStyle = '#241812';
+    ctx.globalAlpha = 0.5 * dim;
+    for (let i = 0; i < 6; i++) {
+      const rx = 30 + i * (VW - 60) / 5 + rng() * 30, ry = VH * 0.30 + rx * 0.25 + rng() * 40, rr = 4 + rng() * 6;
+      ctx.beginPath();
+      ctx.arc(rx, ry, rr, 0, 7);
+      ctx.arc(rx + rr * 0.7, ry - rr * 0.3, rr * 0.7, 0, 7);
+      ctx.arc(rx - rr * 0.6, ry + rr * 0.4, rr * 0.6, 0, 7);
+      ctx.fill();
+    }
+  } else if (sig === 'dyingStar') {
+    const gate = Math.sin(sigT * 7) * Math.sin(sigT * 1.7);
+    const a = gate > 0.5 ? 0.18 : (gate > 0.1 ? 0.05 : 0);
+    if (a > 0) {
+      ctx.globalAlpha = a * dim;
+      ctx.fillStyle = '#cfe0ff';
+      ctx.beginPath(); ctx.arc(rng() * VW, rng() * VH * 0.7, 2, 0, 7); ctx.fill();
+    }
+    // the glitch: every ~6s a plotter scanline flickers across the blueprint
+    if (sigT % 6 < 0.034) {
+      ctx.globalAlpha = 0.06 * dim;
+      ctx.fillStyle = 'rgb(190,200,220)';
+      ctx.fillRect(0, ((sigT * 131) % VH), VW, 1);
+    }
+  } else if (sig === 'embers') {
+    ctx.fillStyle = 'rgb(255,140,90)';
+    for (let i = 0; i < 10; i++) {
+      const ex = rng() * VW, ey0 = rng() * VH, ph = rng() * 7, a = 0.05 + rng() * 0.07, r = 0.5 + rng() * 0.7;
+      ctx.globalAlpha = a * dim;
+      ctx.beginPath();
+      ctx.arc(ex + Math.sin(sigT * 0.8 + ph) * 6, (ey0 - sigT * 9 % VH + VH) % VH, r, 0, 7);
+      ctx.fill();
+    }
+  } else if (sig === 'accretion') {
+    const g = ctx.createLinearGradient(0, 0, 0, 140);
+    g.addColorStop(0, 'rgba(138,108,240,0.05)'); g.addColorStop(1, 'rgba(138,108,240,0)');
+    ctx.fillStyle = g;
+    ctx.fillRect(0, 0, VW, 140);
+  }
+  ctx.restore();
+}
+
+// ---------- biome launch-site terrain (STYLE-GUIDE: the name implies the ground) ----------
+// Deterministic per biome (seeded by biome index): each biome has THE launch
+// site, a signature landmark, not a reroll. Dim, low-saturation, under the
+// luminance ceiling — terrain reads in the corner of the eye, never competes
+// with the flight. Tall features skip the pad band so the gantry stays clean.
+function groundYAt(x) { return VH + 560 - Math.sqrt(611 * 611 - (x - VW / 2) ** 2); }
+function drawGround(biome, now) {
+  const style = biome.ground && biome.ground.style;
+  if (!style) return;
+  const rng = mulberry32((BIOMES.indexOf(biome) * 7919 + 12345) >>> 0);
+  const padBand = x => Math.abs(x - PAD.x) < 34;
+  // in-ground texture is clipped to the horizon disc; silhouettes rise above it
+  const clipGround = () => { ctx.beginPath(); ctx.arc(VW / 2, VH + 560, 611, 0, 7); ctx.clip(); };
+  ctx.save();
+  if (style === 'city') {           // HOME STRETCH: town lights along the horizon
+    for (let i = 0; i < 6; i++) {
+      const x = 14 + rng() * (VW - 28);
+      if (padBand(x)) continue;
+      const w = 8 + rng() * 12, h = 4 + rng() * 9, y = groundYAt(x);
+      ctx.fillStyle = '#161d2b';
+      ctx.fillRect(x - w / 2, y - h, w, h + 6);
+      ctx.fillStyle = 'rgba(255,217,160,0.55)';
+      for (let k = 0; k < 3; k++) {
+        if (rng() < 0.7) ctx.fillRect(x - w / 2 + 1.5 + k * (w - 3) / 2.6, y - h + 1.5 + rng() * (h - 3), 1.4, 1.4);
+      }
+    }
+  } else if (style === 'pools') {   // THE SHALLOWS: tide pools catching skylight
+    clipGround();
+    for (let i = 0; i < 8; i++) {
+      const x = 20 + rng() * (VW - 40), y = groundYAt(x) + 6 + rng() * 26;
+      const rx = 7 + rng() * 13, ry = 1.6 + rng() * 2;
+      ctx.fillStyle = 'rgba(120,255,190,0.10)';
+      ctx.beginPath(); ctx.ellipse(x, y, rx, ry, 0, 0, 7); ctx.fill();
+      ctx.strokeStyle = 'rgba(190,255,230,0.16)'; ctx.lineWidth = 0.8;
+      ctx.beginPath(); ctx.ellipse(x, y, rx, ry, 0, Math.PI, Math.PI * 2); ctx.stroke();
+    }
+  } else if (style === 'crystals') {  // VIOLET DEEP: translucent spires
+    for (let i = 0; i < 9; i++) {
+      const x = 12 + rng() * (VW - 24);
+      if (padBand(x)) continue;
+      const h = 5 + rng() * 15, w = 2 + rng() * 3.5, y = groundYAt(x) + 2, lean = (rng() - 0.5) * 4;
+      ctx.fillStyle = 'rgba(180,140,255,0.15)';
+      ctx.beginPath(); ctx.moveTo(x - w, y); ctx.lineTo(x + lean, y - h); ctx.lineTo(x + w, y); ctx.closePath(); ctx.fill();
+      ctx.strokeStyle = 'rgba(200,170,255,0.22)'; ctx.lineWidth = 0.7;
+      ctx.beginPath(); ctx.moveTo(x + lean, y - h); ctx.lineTo(x + w, y); ctx.stroke();
+    }
+  } else if (style === 'ice') {     // THE ICE SHELF: strata lines + shards
+    clipGround();
+    ctx.strokeStyle = 'rgba(180,225,255,0.10)'; ctx.lineWidth = 1;
+    for (let i = 0; i < 4; i++) {
+      const off = 8 + i * 9 + rng() * 4;
+      ctx.beginPath(); ctx.arc(VW / 2, VH + 560, 611 - off, Math.PI * 1.28, Math.PI * 1.72); ctx.stroke();
+    }
+    ctx.restore(); ctx.save();
+    for (let i = 0; i < 6; i++) {
+      const x = 16 + rng() * (VW - 32);
+      if (padBand(x)) continue;
+      const h = 3 + rng() * 7, y = groundYAt(x) + 1;
+      ctx.fillStyle = 'rgba(200,240,255,0.18)';
+      ctx.beginPath(); ctx.moveTo(x - 2.5, y); ctx.lineTo(x + (rng() - 0.5) * 3, y - h); ctx.lineTo(x + 2.5, y); ctx.closePath(); ctx.fill();
+    }
+  } else if (style === 'moss') {    // EMERALD VERGE: soft tufts hugging the curve
+    for (let i = 0; i < 14; i++) {
+      const x = 10 + rng() * (VW - 20), r = 2 + rng() * 5, y = groundYAt(x) + r * 0.4;
+      ctx.fillStyle = 'rgba(120,255,190,' + (0.06 + rng() * 0.07).toFixed(3) + ')';
+      ctx.beginPath(); ctx.arc(x, y, r, Math.PI, Math.PI * 2); ctx.fill();
+    }
+  } else if (style === 'dunes') {   // GILDED DRIFT: layered dune crests
+    clipGround();
+    for (let i = 0; i < 3; i++) {
+      const y0 = VH - 40 + i * 14, amp = 3 + rng() * 4, ph = rng() * 7;
+      ctx.fillStyle = 'rgba(255,190,120,' + (0.05 + i * 0.02) + ')';
+      ctx.beginPath(); ctx.moveTo(-10, VH + 10);
+      for (let x = -10; x <= VW + 10; x += 12) ctx.lineTo(x, y0 + Math.sin(x / 46 + ph) * amp);
+      ctx.lineTo(VW + 10, VH + 10); ctx.closePath(); ctx.fill();
+      ctx.strokeStyle = 'rgba(255,220,170,0.10)'; ctx.lineWidth = 0.8;
+      ctx.beginPath();
+      for (let x = -10; x <= VW + 10; x += 12) ctx.lineTo(x, y0 + Math.sin(x / 46 + ph) * amp);
+      ctx.stroke();
+    }
+  } else if (style === 'mining') {  // THE RUST BELT: headframes + slag heaps
+    for (let i = 0; i < 3; i++) {
+      const x = 30 + rng() * (VW - 60);
+      if (padBand(x)) continue;
+      const h = 10 + rng() * 8, y = groundYAt(x) + 2;
+      ctx.strokeStyle = 'rgba(210,130,90,0.30)'; ctx.lineWidth = 1.2;
+      ctx.beginPath();                                    // A-frame + wheel
+      ctx.moveTo(x - 5, y); ctx.lineTo(x, y - h); ctx.lineTo(x + 5, y);
+      ctx.moveTo(x - 3, y - h * 0.45); ctx.lineTo(x + 3, y - h * 0.45);
+      ctx.stroke();
+      ctx.beginPath(); ctx.arc(x, y - h, 2.2, 0, 7); ctx.stroke();
+    }
+    for (let i = 0; i < 4; i++) {
+      const x = 14 + rng() * (VW - 28), w = 10 + rng() * 14, h = 3 + rng() * 4, y = groundYAt(x) + 1;
+      ctx.fillStyle = 'rgba(255,150,90,0.08)';
+      ctx.beginPath(); ctx.moveTo(x - w / 2, y); ctx.lineTo(x, y - h); ctx.lineTo(x + w / 2, y); ctx.closePath(); ctx.fill();
+    }
+  } else if (style === 'reef') {    // CRIMSON SHOALS: jagged shoal teeth
+    for (let i = 0; i < 12; i++) {
+      const x = 10 + rng() * (VW - 20);
+      if (padBand(x)) continue;
+      const h = 2.5 + rng() * 6, w = 2 + rng() * 4, y = groundYAt(x) + 1.5;
+      ctx.fillStyle = 'rgba(255,100,130,' + (0.08 + rng() * 0.08).toFixed(3) + ')';
+      ctx.beginPath(); ctx.moveTo(x - w, y); ctx.lineTo(x + (rng() - 0.5) * 2, y - h); ctx.lineTo(x + w, y); ctx.closePath(); ctx.fill();
+    }
+  } else if (style === 'barren') {  // DEAD SPACE: crater rims, nothing else
+    clipGround();
+    for (let i = 0; i < 6; i++) {
+      const x = 20 + rng() * (VW - 40), y = groundYAt(x) + 8 + rng() * 24;
+      const rx = 5 + rng() * 10, ry = rx * 0.32;
+      ctx.strokeStyle = 'rgba(160,160,180,0.13)'; ctx.lineWidth = 1;
+      ctx.beginPath(); ctx.ellipse(x, y, rx, ry, 0, 0, 7); ctx.stroke();
+      ctx.strokeStyle = 'rgba(0,0,0,0.25)';
+      ctx.beginPath(); ctx.ellipse(x, y + 1, rx * 0.8, ry * 0.7, 0, 0, Math.PI); ctx.stroke();
+    }
+  } else if (style === 'embers') {  // EMBER NEBULA: glowing cracks (breathe with the strobes)
+    clipGround();
+    ctx.globalCompositeOperation = 'lighter';
+    for (let i = 0; i < 5; i++) {
+      const x0 = 14 + rng() * (VW - 28), y0 = groundYAt(x0) + 4 + rng() * 18, seg = 3 + Math.floor(rng() * 3);
+      const pulse = 0.16 + 0.10 * Math.sin(now * 1.3 + i * 2.1);
+      ctx.strokeStyle = 'rgba(255,120,70,' + pulse.toFixed(3) + ')'; ctx.lineWidth = 1.1;
+      ctx.beginPath(); ctx.moveTo(x0, y0);
+      let cx2 = x0, cy2 = y0;
+      for (let k = 0; k < seg; k++) { cx2 += (rng() - 0.5) * 26; cy2 += rng() * 7; ctx.lineTo(cx2, cy2); }
+      ctx.stroke();
+    }
+  } else if (style === 'glass') {   // EVENT HORIZON: black glass, violet rim light
+    ctx.globalCompositeOperation = 'lighter';
+    ctx.strokeStyle = 'rgba(150,110,255,0.28)'; ctx.lineWidth = 1.4;
+    ctx.beginPath(); ctx.arc(VW / 2, VH + 560, 611, Math.PI * 1.3, Math.PI * 1.7); ctx.stroke();
+    ctx.globalCompositeOperation = 'source-over';
+    clipGround();
+    for (let i = 0; i < 5; i++) {   // faint star reflections in the glass
+      const x = 20 + rng() * (VW - 40), y = groundYAt(x) + 4 + rng() * 16;
+      ctx.strokeStyle = 'rgba(200,190,255,0.07)'; ctx.lineWidth = 1;
+      ctx.beginPath(); ctx.moveTo(x, y); ctx.lineTo(x, y + 5 + rng() * 6); ctx.stroke();
+    }
+  }
+  ctx.restore();
+}
+
+// ---------- draw ----------
+function draw() {
+  const now = performance.now() / 1000;
+  const biome = biomeFor(game.depth);
+  const dim = lapDim(game.depth);
+  // signature/ambient motion freezes during flight (one-moving-focal-point rule)
+  const sigT = game.state === 'flight' ? game.freezeT : now;
+  ctx.setTransform(1, 0, 0, 1, 0, 0);
+  if (biome.bgGrad) {                // E1: vertical depth (or inversion — Shallows)
+    const bgg = ctx.createLinearGradient(0, 0, 0, canvas.height);
+    bgg.addColorStop(0, biome.bgGrad[0]); bgg.addColorStop(1, biome.bgGrad[1]);
+    ctx.fillStyle = bgg;
+  } else {
+    ctx.fillStyle = biome.bg;
+  }
+  ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+  const shx = game.shake ? (Math.random() - 0.5) * game.shake * scale * 0.4 : 0;
+  const shy = game.shake ? (Math.random() - 0.5) * game.shake * scale * 0.4 : 0;
+  ctx.setTransform(scale, 0, 0, scale, ox + shx, oy + shy);
+
+  const S = game.sys;
+  ctx.fillStyle = '#cfe0ff';
+  ctx.strokeStyle = '#cfe0ff';
+  ctx.lineWidth = 1;
+  for (const L of STAR_LAYERS) {
+    for (let i = 0; i < L.stars.length; i++) {
+      const s = L.stars[i];
+      // biome star tuning: deterministic density thinning + alpha scale (heroes exempt)
+      if (!s.hero && (i % 20) >= biome.stars.density * 20) continue;
+      const sy = (s.y + now * L.speed) % VH;
+      const sa = s.hero ? s.a : Math.min(s.a * biome.stars.alpha * dim, 0.55);
+      // E2: per-biome star glyph — plotter squares (Blueprint), infall streaks
+      // (the Lens); hero stars stay dots everywhere (the last lights)
+      if (biome.skyMode === 'squares' && !s.hero) {
+        ctx.globalAlpha = sa;
+        ctx.fillRect(s.x, sy, 1.4, 1.4);
+      } else if (biome.skyMode === 'streaks' && !s.hero) {
+        const at2 = Math.atan2(-240 - sy, VW / 2 - s.x);
+        ctx.globalAlpha = sa * 0.8;
+        ctx.beginPath(); ctx.moveTo(s.x, sy);
+        ctx.lineTo(s.x + Math.cos(at2) * 5, sy + Math.sin(at2) * 5); ctx.stroke();
+      } else {
+        ctx.globalAlpha = sa;
+        ctx.beginPath(); ctx.arc(s.x, sy, s.r, 0, 7); ctx.fill();
+      }
+    }
+  }
+  ctx.globalAlpha = 1;
+  drawSkyExtras(biome, sigT, dim);   // E2: bubbles / snow / ash / spores / plankton
+  drawScenery(biome, sigT);          // E4: silhouette layer (darker than bg — free variety)
+
+  drawSignature(biome, game.depth, sigT, dim);
+
+  // per-system atmosphere (nebula / Oort band)
+  const D = S.decor;
+  if (D && D.type === 'nebula') {
+    for (let bi = 0; bi < D.blobs.length; bi++) {
+      const b = D.blobs[bi];
+      const ng = ctx.createRadialGradient(b.x, b.y, 0, b.x, b.y, b.r);
+      ng.addColorStop(0, 'rgba(' + b.hue + ',' + b.a + ')');
+      ng.addColorStop(1, 'rgba(' + b.hue + ',0)');
+      ctx.fillStyle = ng;
+      ctx.beginPath(); ctx.arc(b.x, b.y, b.r, 0, 7); ctx.fill();
+    }
+  } else if (D && D.type === 'brush') {
+    // Violet Deep: tapered ink strokes instead of nebula murk
+    ctx.fillStyle = 'rgb(170,130,255)';
+    for (const st of D.strokes) {
+      ctx.globalAlpha = st.a * dim;
+      const ex2 = st.x + Math.cos(st.ang) * st.len, ey2 = st.y + Math.sin(st.ang) * st.len;
+      const px2 = Math.cos(st.ang + Math.PI / 2), py2 = Math.sin(st.ang + Math.PI / 2);
+      const mx2 = (st.x + ex2) / 2 + px2 * st.w * 0.35, my2 = (st.y + ey2) / 2 + py2 * st.w * 0.35;
+      ctx.beginPath();
+      ctx.moveTo(st.x - px2 * st.w / 2, st.y - py2 * st.w / 2);
+      ctx.quadraticCurveTo(mx2, my2, ex2 - px2, ey2 - py2);
+      ctx.lineTo(ex2 + px2, ey2 + py2);
+      ctx.quadraticCurveTo((st.x + ex2) / 2 - px2 * st.w * 0.15, (st.y + ey2) / 2 - py2 * st.w * 0.15,
+                           st.x + px2 * st.w / 2, st.y + py2 * st.w / 2);
+      ctx.closePath(); ctx.fill();
+    }
+    ctx.globalAlpha = 1;
+  } else if (D && D.type === 'oort') {
+    ctx.fillStyle = '#cfe8ff';
+    for (const sp of D.specks) {
+      ctx.globalAlpha = sp.a;
+      ctx.beginPath(); ctx.arc(sp.x, sp.y, sp.r, 0, 7); ctx.fill();
+    }
+    ctx.globalAlpha = 1;
+  }
+
+  drawAmbient(now);
+
+  for (const p of S.layout.planets) {
+    for (let k = 1; k <= 3; k++) {
+      ctx.globalAlpha = 0.10 - k * 0.025;
+      ctx.strokeStyle = '#9fb4ff';
+      ctx.lineWidth = 1.5;
+      ctx.beginPath(); ctx.arc(p.x, p.y, p.r * (1 + k * 0.85), 0, 7); ctx.stroke();
+    }
+  }
+  ctx.globalAlpha = 1;
+  for (const p of S.layout.planets) drawPlanet(p);
+
+  // orbiters — always in motion (D-adr-022): live clock on the ground and after
+  // the flight, physics time (phase-continuous) while flying
+  const tOrb = game.state === 'flight' ? game.craft.t0 + game.craft.t : orbNow();
+  for (const m of S.layout.moons) {
+    const pl = S.layout.planets[m.pi];
+    ctx.strokeStyle = 'rgba(255,157,138,0.10)'; ctx.lineWidth = 1;
+    ctx.beginPath(); ctx.arc(pl.x, pl.y, m.orbR, 0, 7); ctx.stroke();
+    const [mx, my] = orbPos(S.layout, m, tOrb);
+    drawMoon(mx, my, m.r);
+  }
+  for (const s of S.layout.sats) {
+    if (s.got) continue;
+    const pl = S.layout.planets[s.pi];
+    ctx.strokeStyle = 'rgba(255,209,102,0.10)'; ctx.lineWidth = 1;
+    ctx.beginPath(); ctx.arc(pl.x, pl.y, s.orbR, 0, 7); ctx.stroke();
+    const [sx, sy] = orbPos(S.layout, s, tOrb);
+    drawSat(sx, sy, now);
+  }
+
+  drawGate(S.layout.gate, now);
+
+  // drag focus: dim the scene a touch so the aim line owns the eye
+  if (game.state === 'aim' && game.drag && game.preview) {
+    ctx.fillStyle = 'rgba(0,0,0,0.12)';
+    ctx.fillRect(-20, -20, VW + 40, VH + 40);
+  }
+
+  // planet-surface horizon with the launch complex (biome-themed ground)
+  const gTop = lerpColor(biome.bg, (biome.ground && biome.ground.top) || '#3a4150', 0.55);
+  const gBot = lerpColor(biome.bg, '#0a0c12', 0.6);
+  const gg2 = ctx.createLinearGradient(0, VH - 56, 0, VH);
+  gg2.addColorStop(0, gTop); gg2.addColorStop(1, gBot);
+  ctx.fillStyle = gg2;
+  ctx.beginPath(); ctx.arc(VW / 2, VH + 560, 611, 0, 7); ctx.fill();
+  ctx.strokeStyle = 'rgba(200,220,255,0.10)'; ctx.lineWidth = 1.5;
+  ctx.beginPath(); ctx.arc(VW / 2, VH + 560, 611, 0, 7); ctx.stroke();
+  drawGround(biome, now);            // biome-signature terrain (name implies the site)
+  // elevated platform + legs
+  ctx.fillStyle = '#39414a';
+  ctx.fillRect(PAD.x - 17, 743, 34, 4.5);
+  ctx.fillRect(PAD.x - 13, 747.5, 3, 7);
+  ctx.fillRect(PAD.x + 10, 747.5, 3, 7);
+  // gantry tower with service arm and braces
+  ctx.strokeStyle = '#4a5563'; ctx.lineWidth = 2;
+  ctx.beginPath(); ctx.moveTo(PAD.x - 24, 750); ctx.lineTo(PAD.x - 24, 714); ctx.stroke();
+  ctx.lineWidth = 1;
+  ctx.beginPath();
+  ctx.moveTo(PAD.x - 24, 722); ctx.lineTo(PAD.x - 10, 726);
+  ctx.moveTo(PAD.x - 28, 750); ctx.lineTo(PAD.x - 24, 740);
+  ctx.moveTo(PAD.x - 20, 750); ctx.lineTo(PAD.x - 24, 740);
+  ctx.stroke();
+  // launch telemetry below the platform: live while aiming, last shot otherwise
+  if (game.state === 'aim') {
+    const tv = (game.drag && game.previewVel) ? game.previewVel : game.lastShot;
+    if (tv) {
+      const live = !!(game.drag && game.previewVel);
+      const spd = Math.hypot(tv.vx, tv.vy);
+      const angDeg = (Math.atan2(-tv.vy, tv.vx) * 180 / Math.PI + 360) % 360;
+      const thr = Math.round(Math.min((spd - MIN_V) / (MAX_V - MIN_V), 1) * 100);
+      ctx.textAlign = 'center';
+      ctx.font = '600 11px Oxanium, -apple-system, sans-serif';
+      ctx.globalAlpha = live ? 0.95 : 0.45;
+      ctx.fillStyle = live ? '#7ef0ff' : '#8fa2c8';
+      ctx.fillText((live ? '' : 'LAST   ') + '\u2220 ' + angDeg.toFixed(1) + '\u00b0   V ' + Math.round(spd) + '   THR ' + thr + '%', PAD.x, VH - 4);
+      ctx.globalAlpha = 1;
+    }
+  }
+  // pad strobes (danger register)
+  for (const [sx2, ph2] of [[PAD.x - 17, 0], [PAD.x + 17, Math.PI]]) {
+    ctx.globalAlpha = Math.sin(now * 3 + ph2) > 0.2 ? 0.9 : 0.15;
+    ctx.fillStyle = '#ff9d8a';
+    ctx.beginPath(); ctx.arc(sx2, 741, 1.4, 0, 7); ctx.fill();
+  }
+  ctx.globalAlpha = 1;
+
+  // ghosts of every failed flight on THIS layout — the run's accumulated lessons
+  const hereGhosts = game.ghosts.filter(g2 => g2.seed === game.runSeed && g2.depth === game.depth);
+  ctx.fillStyle = '#cfe0ff';
+  for (let gi = 0; gi < hereGhosts.length; gi++) {
+    const gp = hereGhosts[gi].path, gn = gp.length / 2;
+    const age = hereGhosts.length - 1 - gi;              // 0 = newest
+    ctx.globalAlpha = Math.max(0.18 - age * 0.035, 0.06);
+    for (let i = 0; i < gn; i += 8) {
+      ctx.beginPath(); ctx.arc(gp[i * 2], gp[i * 2 + 1], 2, 0, 7); ctx.fill();
+    }
+  }
+  ctx.globalAlpha = 1;
+
+  // run over: the proof — dotted winning path + a demo ship flying it into the
+  // wormhole on loop, so a lost system ends as a lesson, not a wall
+  if (game.state === 'dead' && game.lives <= 0 && game.solDemo) {
+    const sd = game.solDemo, sn = sd.path.length / 2;
+    ctx.fillStyle = '#e8f0ff';
+    ctx.globalAlpha = 0.30;
+    for (let i = 4; i < sn; i += 5) {
+      ctx.beginPath(); ctx.arc(sd.path[i * 2], sd.path[i * 2 + 1], 2.2, 0, 7); ctx.fill();
+    }
+    ctx.globalAlpha = 1;
+    const replay = 1.4;                              // demo runs a touch quick
+    const flightT = sn * DT / replay;
+    const td = ((performance.now() - sd.at) / 1000) % (flightT + 0.9);
+    if (td < flightT) {
+      const idx = Math.min(Math.floor(td * replay / DT), sn - 2);
+      const dx2 = sd.path[idx * 2], dy2 = sd.path[idx * 2 + 1];
+      const dAng = Math.atan2(sd.path[idx * 2 + 3] - dy2, sd.path[idx * 2 + 2] - dx2);
+      ctx.globalAlpha = Math.min(td / 0.25, 1) * Math.max(Math.min((flightT - td) / 0.15, 1), 0);
+      drawShip(dx2, dy2, dAng, true, now);
+      ctx.globalAlpha = 1;
+    }
+  }
+
+  if (game.state === 'aim' && game.preview) {
+    // aim line color rises with power: cyan -> white -> gold
+    const f = game.previewPower;
+    ctx.fillStyle = f < 0.5 ? lerpColor('#7ef0ff', '#ffffff', f * 2) : lerpColor('#ffffff', '#ffd166', (f - 0.5) * 2);
+    const n = game.preview.length / 2;
+    for (let i = 6; i < n; i += 6) {
+      ctx.globalAlpha = 0.85 * (1 - i / n);
+      ctx.beginPath();
+      ctx.arc(game.preview[i * 2], game.preview[i * 2 + 1], 3, 0, 7);
+      ctx.fill();
+    }
+    ctx.globalAlpha = 1;
+  }
+
+  // hero trail: additive tapering ribbon; lingers and fades ~2s after a death
+  const trailFade = game.state === 'dead' ? Math.max(0, 1 - (performance.now() - game.deadAt) / 2000) : 1;
+  if (game.trail.length > 2 && trailFade > 0 && game.state !== 'aim') {
+    ctx.save();
+    ctx.globalCompositeOperation = 'lighter';
+    ctx.strokeStyle = '#7ef0ff';
+    ctx.lineCap = 'round';
+    const t = game.trail, n = t.length / 2;
+    for (let i = 1; i < n; i++) {
+      ctx.globalAlpha = 0.55 * (i / n) * trailFade;
+      ctx.lineWidth = 0.5 + 3 * (i / n);
+      ctx.beginPath();
+      ctx.moveTo(t[(i - 1) * 2], t[(i - 1) * 2 + 1]);
+      ctx.lineTo(t[i * 2], t[i * 2 + 1]);
+      ctx.stroke();
+    }
+    ctx.restore();
+  }
+  if (game.state === 'flight') {
+    const c = game.craft;
+    let ang = Math.atan2(c.vy, c.vx);
+    const gA = S.layout.gate;
+    const adx = gA.x - c.x, ady = gA.y - c.y;
+    const ad = Math.hypot(adx, ady);
+    if (game.gateLock) {
+      // the turn is trajectory-verified: it only starts when this flight WILL
+      // enter the gate — a guaranteed tell, never a tease (no closing-dot test:
+      // the lock already proves entry, and hooking approaches shouldn't flicker).
+      // Time-ramped so a late latch (curving shots) eases in instead of snapping.
+      const ramp = Math.min((now - game.gateLockAt) / 0.35, 1);
+      const wgt = Math.max(0, Math.min(1 - (ad - gA.r) / (gA.r * 1.4), 0.9)) * ramp;
+      const ta = Math.atan2(ady, adx);
+      ang += (((ta - ang + Math.PI * 3) % (Math.PI * 2)) - Math.PI) * wgt;
+    }
+    drawShip(c.x, c.y, ang, true, now);
+  } else if (game.state === 'win' && game.winCraft && !game.winDone) {
+    // entry dive: continuous with flight — same velocity at the crossing,
+    // steering + acceleration carry it into the throat, fading as it goes
+    const g2 = S.layout.gate, w = game.winCraft;
+    const d = Math.hypot(g2.x - w.x, g2.y - w.y) || 1;
+    const sc = Math.max(0.18, Math.min(d / w.d0, 1));
+    ctx.save();
+    ctx.globalAlpha = Math.max(Math.min(d / (g2.r * 0.5), 1), 0);
+    ctx.translate(w.x, w.y); ctx.scale(sc, sc); ctx.translate(-w.x, -w.y);
+    drawShip(w.x, w.y, Math.atan2(w.vy, w.vx), true, now);
+    ctx.restore();
+  } else if (game.state === 'aim') {
+    const squash = game.drag && game.preview ? 0.04 * game.previewPower : 0;
+    drawShip(PAD.x, PAD.y - 11, -Math.PI / 2, false, now, squash);   // rear rests on the platform
+  }
+
+  ctx.fillStyle = '#ffb0a0';
+  for (const p of game.particles) {
+    ctx.globalAlpha = Math.max(p.life / 0.55, 0);
+    ctx.beginPath(); ctx.arc(p.x, p.y, 2.5, 0, 7); ctx.fill();
+  }
+  ctx.globalAlpha = 1;
+
+  // (floats + reward FX draw in the final overlay pass — RESEARCH-SCORE-FX P1a)
+
+  // SCOREBOARD — always-on strip across the top (D-adr-020): realtime success
+  // indicators. Score left (count-up + punch + gold flash), satellites center
+  // (spinning gold bus, pops on every grab), the chase right (BEST + system,
+  // gold in fresh territory), best-chase progress bar along the base.
+  // The strip lives above y=48; gates never spawn above y=58, so it owns the space.
+  const ps = (performance.now() - game.scorePunchAt) / 1000;
+  // punch: 1.45x base rising with bank streak (cap 1.7), 0.28s back-out settle
+  const pu = Math.min(ps / 0.28, 1);
+  const punch = 1 + ((game.punchPeak || 1.45) - 1) * Math.sin(pu * Math.PI) * (1 - 0.35 * pu);
+  ctx.fillStyle = 'rgba(6,9,16,0.62)';
+  ctx.fillRect(0, 0, VW, 48);
+  ctx.textAlign = 'left';
+  ctx.font = '600 9px Oxanium, -apple-system, sans-serif';
+  ctx.fillStyle = '#8fa2c8';
+  ctx.fillText('SCORE', 18, 13);
+  ctx.save();
+  ctx.translate(18, 39);
+  ctx.scale(punch, punch);
+  ctx.fillStyle = ps < 0.35 ? lerpColor('#ffd166', '#e8f0ff', ps / 0.35) : '#e8f0ff';
+  ctx.font = '800 26px Oxanium, -apple-system, sans-serif';
+  ctx.fillText(String(Math.round(game.dispScore * PT)), 0, 0);
+  ctx.restore();
+  // satellites banked this run
+  const sp = (performance.now() - game.satPunchAt) / 1000;
+  const satPop = sp < 0.25 ? 1 + 0.5 * Math.sin((sp / 0.25) * Math.PI) : 1;
+  ctx.textAlign = 'center';
+  ctx.font = '600 9px Oxanium, -apple-system, sans-serif';
+  ctx.fillStyle = '#8fa2c8';
+  ctx.fillText('SATS', VW / 2, 13);
+  ctx.save();
+  ctx.translate(VW / 2 - 14, 29);
+  ctx.scale(0.8 * satPop, 0.8 * satPop);
+  drawSat(0, 0, now * 0.4);
+  ctx.restore();
+  ctx.save();
+  ctx.translate(VW / 2 + 4, 38);
+  ctx.scale(satPop, satPop);
+  ctx.textAlign = 'left';
+  ctx.fillStyle = sp < 0.35 ? '#ffd166' : '#e8f0ff';
+  ctx.font = '800 22px Oxanium, -apple-system, sans-serif';
+  ctx.fillText(String(game.satsRun), 0, 0);
+  ctx.restore();
+  // the chase
+  const gal = galaxyFor(game.depth);
+  ctx.textAlign = 'right';
+  ctx.font = '600 9px Oxanium, -apple-system, sans-serif';
+  ctx.fillStyle = '#8fa2c8';
+  ctx.fillText(PLAYGROUND ? 'PLAYGROUND' : 'SYS ' + game.depth + (gal > 1 ? ' · G' + gal : ''), VW - 18, 13);
+  ctx.fillStyle = game.bestBeaten ? '#ffd166' : '#e8f0ff';
+  ctx.font = '800 20px Oxanium, -apple-system, sans-serif';
+  ctx.fillText(PLAYGROUND ? 'SYS ' + game.depth
+             : (game.bestBeaten ? 'NEW BEST' : 'BEST ' + best * PT), VW - 18, 38);
+  // (zips draw in the final overlay pass)
+  // best-chase bar: cyan filling toward gold — same language as the aim ramp
+  if (!PLAYGROUND) {
+    const target = best > 0 ? best : 5;
+    ctx.fillStyle = 'rgba(143,162,200,0.18)';
+    ctx.fillRect(0, 46, VW, 2.5);
+    if (game.bestBeaten) {
+      ctx.globalAlpha = 0.75 + 0.25 * Math.sin(now * 3);
+      ctx.fillStyle = '#ffd166';
+      ctx.fillRect(0, 46, VW, 2.5);
+      ctx.globalAlpha = 1;
+    } else {
+      const bfrac = Math.min(game.score / target, 1);
+      ctx.fillStyle = bfrac < 0.99 ? '#7ef0ff' : '#ffd166';
+      ctx.fillRect(0, 46, VW * bfrac, 2.5);
+    }
+    // chained secondary: the bar flashes gold when a reward banks
+    const bf = (performance.now() - (game.barFlashAt || -1e9)) / 1000;
+    if (bf < 0.25) {
+      ctx.globalAlpha = 0.8 * (1 - bf / 0.25);
+      ctx.fillStyle = '#ffd166';
+      ctx.fillRect(0, 46, VW, 2.5);
+      ctx.globalAlpha = 1;
+    }
+  }
+  // the hangar: remaining ships, bottom-left
+  for (let i = 0; i < 5; i++) {
+    const lx = 26 + i * 19, ly = VH - 54;
+    ctx.save();
+    ctx.globalAlpha = i < game.lives ? 0.9 : 0.15;
+    ctx.translate(lx, ly); ctx.scale(0.4, 0.4); ctx.translate(-lx, -ly);
+    drawShip(lx, ly, -Math.PI / 2, false, now);
+    ctx.restore();
+  }
+  // base progress: the persistent goal that travels with you
+  const nParts = partsUnlocked(career);
+  const nextPart = STATION_STAGES.find(p => career < p.at);
+  const prevAt = nParts > 0 ? STATION_STAGES[nParts - 1].at : 0;
+  const frac = nextPart ? (career - prevAt) / (nextPart.at - prevAt) : 1;
+  ctx.textAlign = 'center';
+  ctx.font = '600 10px Oxanium, -apple-system, sans-serif';
+  ctx.fillStyle = '#8fa2c8';
+  ctx.fillText('STATION ' + nParts + '/' + STATION_STAGES.length, VW / 2, VH - 26);
+  ctx.fillStyle = 'rgba(143,162,200,0.25)';
+  ctx.fillRect(VW / 2 - 40, VH - 20, 80, 4);
+  ctx.fillStyle = '#ffd166';
+  ctx.fillRect(VW / 2 - 40, VH - 20, 80 * Math.min(frac, 1), 4);
+
+  // one tip per system, top of the sky (stable across retries of the system)
+  if (game.state === 'aim') {
+    ctx.globalAlpha = 0.55;
+    ctx.fillStyle = '#8fa2c8';
+    ctx.font = '600 12px Oxanium, -apple-system, sans-serif';
+    ctx.fillText(TIPS[(game.depth * 31 + (game.runSeed & 1023)) % TIPS.length], VW / 2, 64);
+    ctx.globalAlpha = 1;
+  }
+
+  ctx.font = '600 15px Oxanium, -apple-system, sans-serif';
+  if (game.state === 'aim' && !game.hintsDone) {
+    ctx.globalAlpha = 0.65;
+    ctx.fillStyle = '#8fa2c8';
+    ctx.fillText('drag anywhere to aim — release to fling', VW / 2, game.hintY);
+    ctx.fillText('graze planets = bonus · grab satellites · avoid moons', VW / 2, game.hintY + 22);
+    ctx.globalAlpha = 1;
+  } else if (game.state === 'dead' && game.lives > 0) {
+    // mission failed but ships remain: compact retry screen, ghost is on the field
+    ctx.textAlign = 'center';
+    ctx.fillStyle = '#ff9d8a';
+    ctx.font = '800 30px Oxanium, -apple-system, sans-serif';
+    ctx.fillText(game.deadMsg, VW / 2, VH / 2 - 40);
+    ctx.font = '600 15px Oxanium, -apple-system, sans-serif';
+    ctx.fillStyle = '#8fa2c8';
+    ctx.fillText(game.lives + ' ship' + (game.lives === 1 ? '' : 's') + ' left · your last path is marked', VW / 2, VH / 2 - 10);
+    if (game.satsThisFlight > 0) {
+      ctx.fillStyle = '#ffd166';
+      ctx.fillText('+' + game.satsThisFlight + ' satellite' + (game.satsThisFlight === 1 ? '' : 's') + ' banked to the station', VW / 2, VH / 2 + 14);
+    }
+    if (game.grazesThisFlight > 0) {
+      ctx.fillStyle = '#ffd166';
+      ctx.fillText('+' + game.grazesThisFlight + ' slingshot' + (game.grazesThisFlight === 1 ? '' : 's') + ' banked', VW / 2, VH / 2 + (game.satsThisFlight > 0 ? 36 : 14));
+    }
+    if (performance.now() - game.deadAt > 350) {
+      ctx.globalAlpha = 0.55 + 0.3 * Math.sin(now * 4);
+      ctx.fillStyle = '#e8f0ff';
+      ctx.fillText('tap to retry', VW / 2, VH * 0.72);
+      ctx.globalAlpha = 1;
+    }
+  } else if (game.state === 'dead') {
+    // hangar empty: full run-over screen with the base you're building
+    drawStation(ctx, VW / 2, VH * 0.27, 1.8, partsUnlocked(career), now);
+    ctx.textAlign = 'center';
+    if (game.partUnlocked) {
+      ctx.fillStyle = '#ffd166';
+      ctx.font = '800 18px Oxanium, -apple-system, sans-serif';
+      ctx.fillText('NEW PART: ' + game.partUnlocked, VW / 2, VH * 0.27 + 52);
+    } else {
+      ctx.fillStyle = '#8fa2c8';
+      ctx.font = '600 12px Oxanium, -apple-system, sans-serif';
+      ctx.fillText(nextPart ? (nextPart.at - career) * PT + ' pts to ' + nextPart.name : 'BASE COMPLETE', VW / 2, VH * 0.27 + 52);
+    }
+    ctx.fillStyle = '#ff9d8a';
+    ctx.font = '800 30px Oxanium, -apple-system, sans-serif';
+    ctx.fillText('OUT OF SHIPS', VW / 2, VH / 2 - 40);
+    if (game.bestBeaten) {
+      ctx.fillStyle = '#ffd166';
+      ctx.font = '800 22px Oxanium, -apple-system, sans-serif';
+      ctx.fillText('NEW BEST!', VW / 2, VH / 2 - 6);
+    }
+    ctx.font = '600 16px Oxanium, -apple-system, sans-serif';
+    ctx.fillStyle = game.bestBeaten ? '#ffd166' : '#8fa2c8';
+    ctx.fillText(game.score * PT + ' PTS   ·   BEST ' + best * PT, VW / 2, VH / 2 + 26);
+    if (game.solDemo) {
+      // the winning shot's numbers, player-cyan: this is a flyable instruction
+      const sspd = Math.hypot(game.solDemo.vx, game.solDemo.vy);
+      const sang = (Math.atan2(-game.solDemo.vy, game.solDemo.vx) * 180 / Math.PI + 360) % 360;
+      const sthr = Math.round(Math.min((sspd - MIN_V) / (MAX_V - MIN_V), 1) * 100);
+      ctx.fillStyle = '#7ef0ff';
+      ctx.font = '600 13px Oxanium, -apple-system, sans-serif';
+      ctx.fillText('THE SHOT   ∠ ' + sang.toFixed(1) + '° · V ' + Math.round(sspd) + ' · THR ' + sthr + '%', VW / 2, VH / 2 + 54);
+      ctx.font = '600 11px Oxanium, -apple-system, sans-serif';
+      ctx.fillStyle = '#8fa2c8';
+      ctx.fillText('it was makeable — watch the marked flight', VW / 2, VH / 2 + 74);
+    }
+    if (performance.now() - game.deadAt > 350) {
+      ctx.globalAlpha = 0.55 + 0.3 * Math.sin(now * 4);
+      ctx.fillStyle = '#e8f0ff';
+      ctx.font = '600 15px Oxanium, -apple-system, sans-serif';
+      ctx.fillText('tap for new run', VW / 2, VH * 0.72);
+      ctx.globalAlpha = 1;
+    }
+  }
+
+  // biome-transition splash: name the place, show the station taking shape
+  if (game.state === 'splash') {
+    const st = (performance.now() - game.splashAt) / 1000;
+    const fadeIn = Math.min(st / 0.3, 1);
+    ctx.save();
+    ctx.setTransform(1, 0, 0, 1, 0, 0);              // dim the whole canvas, letterbox included
+    ctx.fillStyle = 'rgba(4,5,10,' + (0.72 * fadeIn).toFixed(3) + ')';
+    ctx.fillRect(0, 0, canvas.width, canvas.height);
+    ctx.restore();
+    ctx.globalAlpha = fadeIn;
+    ctx.textAlign = 'center';
+    // a lap wrap (every 33 systems) is a GALAXY jump, not just another biome
+    const galaxyJump = game.depth > 1 && (game.depth - 1) % 33 === 0;
+    ctx.fillStyle = '#8fa2c8';
+    ctx.font = '600 12px Oxanium, -apple-system, sans-serif';
+    ctx.fillText('ENTERING', VW / 2, VH * 0.26 - 34);
+    ctx.fillStyle = '#e8f0ff';
+    ctx.font = '800 30px Oxanium, -apple-system, sans-serif';
+    ctx.fillText(galaxyJump ? 'GALAXY ' + galaxyFor(game.depth) : biome.name, VW / 2, VH * 0.26);
+    ctx.fillStyle = '#8fa2c8';
+    ctx.font = '600 13px Oxanium, -apple-system, sans-serif';
+    ctx.fillText(galaxyJump ? 'new systems, new worlds — ' + biome.name.toLowerCase() + ' again, but not quite'
+                            : biome.mood, VW / 2, VH * 0.26 + 24);
+    ctx.fillText('SYSTEM ' + game.depth, VW / 2, VH * 0.26 + 44);
+    // the station so far
+    const spN = partsUnlocked(career);
+    const spNext = STATION_STAGES.find(p => career < p.at);
+    drawStation(ctx, VW / 2, VH * 0.52, 2.2, spN, now);
+    ctx.fillStyle = '#8fa2c8';
+    ctx.font = '600 12px Oxanium, -apple-system, sans-serif';
+    ctx.fillText('STATION  ' + spN + '/' + STATION_STAGES.length, VW / 2, VH * 0.52 + 64);
+    const spPrev = spN > 0 ? STATION_STAGES[spN - 1].at : 0;
+    const spFrac = spNext ? (career - spPrev) / (spNext.at - spPrev) : 1;
+    ctx.fillStyle = 'rgba(143,162,200,0.25)';
+    ctx.fillRect(VW / 2 - 60, VH * 0.52 + 74, 120, 4);
+    ctx.fillStyle = '#ffd166';
+    ctx.fillRect(VW / 2 - 60, VH * 0.52 + 74, 120 * Math.min(spFrac, 1), 4);
+    if (spNext) {
+      ctx.fillStyle = '#8fa2c8';
+      ctx.font = '600 11px Oxanium, -apple-system, sans-serif';
+      ctx.fillText((spNext.at - career) * PT + ' pts to ' + spNext.name, VW / 2, VH * 0.52 + 96);
+    }
+    if (st > 0.4) {
+      ctx.globalAlpha = fadeIn * (0.5 + 0.3 * Math.sin(now * 4));
+      ctx.fillStyle = '#e8f0ff';
+      ctx.font = '600 14px Oxanium, -apple-system, sans-serif';
+      ctx.fillText('tap to continue', VW / 2, VH * 0.78);
+    }
+    ctx.globalAlpha = 1;
+  }
+
+  // ---------- reward-FX overlay: ALWAYS the topmost pixels (P1a) ----------
+  // dark under-halos keep gold readable over planets and the scoreboard (P1b)
+  const halo = (x, y, r) => {
+    ctx.fillStyle = 'rgba(6,9,16,0.55)';
+    ctx.beginPath(); ctx.arc(x, y, r + 3, 0, 7); ctx.fill();
+  };
+  for (const z of game.zips) {
+    const age = (performance.now() - z.t0) / 1000;
+    if (age < 0) continue;                       // queued behind an earlier zip
+    if (age < z.hold) {                          // phase A: pop & hold (admire pause)
+      const t = age / z.hold;
+      const s = t < 0.4 ? 1.35 * (t / 0.4) : 1.35 - 0.35 * ((t - 0.4) / 0.6);
+      for (const d of [0, 0.1]) {                // double burst ring
+        if (age < d) continue;
+        const rt = Math.min((age - d) / (z.hold - d), 1);
+        ctx.strokeStyle = 'rgba(6,9,16,0.5)'; ctx.lineWidth = 4;
+        ctx.beginPath(); ctx.arc(z.x0, z.y0, 5 + rt * 23, 0, 7); ctx.stroke();
+        ctx.strokeStyle = 'rgba(255,209,102,' + (0.65 * (1 - rt)).toFixed(3) + ')'; ctx.lineWidth = 2;
+        ctx.beginPath(); ctx.arc(z.x0, z.y0, 5 + rt * 23, 0, 7); ctx.stroke();
+      }
+      if (age < 0.3) {                           // radial gold sparks
+        ctx.fillStyle = 'rgba(255,209,102,' + (0.8 * (1 - age / 0.3)).toFixed(3) + ')';
+        for (let k = 0; k < 9; k++) {
+          const a2 = (k / 9) * Math.PI * 2 + z.seed;
+          const sp2 = 40 + ((z.seed * (k + 3)) % 50);
+          ctx.beginPath();
+          ctx.arc(z.x0 + Math.cos(a2) * sp2 * age, z.y0 + Math.sin(a2) * sp2 * age, 2, 0, 7);
+          ctx.fill();
+        }
+      }
+      halo(z.x0, z.y0, 7 * s);
+      ctx.save();
+      ctx.globalCompositeOperation = 'lighter';
+      ctx.fillStyle = '#ffd166';
+      ctx.globalAlpha = 0.35;                    // soft glow
+      ctx.beginPath(); ctx.arc(z.x0, z.y0, 14 * s, 0, 7); ctx.fill();
+      ctx.globalAlpha = 0.95;                    // core
+      ctx.beginPath(); ctx.arc(z.x0, z.y0, 7 * s, 0, 7); ctx.fill();
+      ctx.restore();
+    } else {                                     // phase B: travel — the zoom
+      const u = Math.pow(Math.min((age - z.hold) / z.dur, 1), 2.2);
+      const tx = 34, ty = 31;                    // the SCORE number
+      const mx = (z.x0 + tx) / 2 + z.bend, my = (z.y0 + ty) / 2;
+      const bez = (a, b, cc, q) => (1 - q) * (1 - q) * a + 2 * (1 - q) * q * b + q * q * cc;
+      const hs = 7 * (1 - 0.4 * u);              // head shrinks toward the tile
+      for (let k = 8; k >= 0; k--) {             // head + 8-segment tail
+        const q = Math.max(u - k * 0.04, 0);
+        const px = bez(z.x0, mx, tx, q), py = bez(z.y0, my, ty, q);
+        const r = k === 0 ? hs : Math.max(hs * 0.55 - k * 0.25, 1);
+        halo(px, py, r);
+        ctx.save();
+        ctx.globalCompositeOperation = 'lighter';
+        ctx.globalAlpha = k === 0 ? 0.95 : Math.max(0.5 - k * 0.055, 0.05);
+        ctx.fillStyle = '#ffd166';
+        ctx.beginPath(); ctx.arc(px, py, r, 0, 7); ctx.fill();
+        ctx.restore();
+      }
+    }
+  }
+  // landing ring on the SCORE tile (impact confirmation, phase C)
+  const lr = (performance.now() - (game.landRingAt || -1e9)) / 1000;
+  if (lr < 0.2) {
+    ctx.strokeStyle = 'rgba(6,9,16,0.5)'; ctx.lineWidth = 3.5;
+    ctx.beginPath(); ctx.arc(34, 31, 2 + (lr / 0.2) * 14, 0, 7); ctx.stroke();
+    ctx.strokeStyle = 'rgba(255,209,102,' + (0.9 * (1 - lr / 0.2)).toFixed(3) + ')'; ctx.lineWidth = 2;
+    ctx.beginPath(); ctx.arc(34, 31, 2 + (lr / 0.2) * 14, 0, 7); ctx.stroke();
+  }
+  // floats last — reward text over everything, dark-outlined (Balatro halo rule)
+  ctx.textAlign = 'center';
+  ctx.lineJoin = 'round';
+  for (const f of game.floats) {
+    ctx.globalAlpha = Math.min(f.life / 0.4, 1);
+    ctx.font = '800 ' + f.size + 'px Oxanium, -apple-system, sans-serif';
+    ctx.strokeStyle = 'rgba(6,9,16,0.85)'; ctx.lineWidth = 3;
+    ctx.strokeText(f.txt, f.x, f.y);
+    ctx.fillStyle = f.color;
+    ctx.fillText(f.txt, f.x, f.y);
+  }
+  ctx.globalAlpha = 1;
+
+  if (game.flash > 0) {
+    ctx.setTransform(1, 0, 0, 1, 0, 0);
+    ctx.globalAlpha = game.flash * 0.3;
+    ctx.fillStyle = '#fff';
+    ctx.fillRect(0, 0, canvas.width, canvas.height);
+    ctx.globalAlpha = 1;
+  }
+}
+
+// ---------- main loop ----------
+// Slow-mo on gate approach is applied to wall-clock time only; the physics path
+// is identical steps, just played slower (determinism preserved).
+let last = performance.now(), acc = 0;
+function frame(now) {
+  let ft = (now - last) / 1000; last = now;
+  if (ft > 0.1) ft = 0.1;
+  if (game.state === 'flight' && game.gateLock) {
+    // slow-mo is part of the tell (D-adr-017): it only engages when entry is
+    // certain, and deepens gradually on the way in — 1x at the lean ring's edge
+    // down to 0.55x at the horizon, eased in over the latch ramp
+    const c = game.craft, g = game.sys.layout.gate;
+    const ad = Math.hypot(g.x - c.x, g.y - c.y);
+    const wgt = Math.max(0, Math.min(1 - (ad - g.r) / (g.r * 1.4), 0.9)) / 0.9;
+    const ramp = Math.min((now / 1000 - game.gateLockAt) / 0.35, 1);
+    ft *= 1 - 0.45 * wgt * ramp;
+  } else if (game.state === 'win' && game.winCraft && !game.winDone) {
+    ft *= 0.55;  // the crossing happens at full slow-mo depth; carry the rate through
+  }
+  // earned peak: triple slingshot dilates the world briefly (P3, once per flight)
+  if (game.state === 'flight' && game.tripleAt && (now - game.tripleAt) / 1000 < 0.35) ft *= 0.5;
+  acc += ft;
+  while (acc >= DT) { tick(DT); acc -= DT; }
+  draw();
+  requestAnimationFrame(frame);
+}
+
+loadSystem(1);
+// warm the game font so the canvas swaps to it within the first frames
+if (document.fonts && document.fonts.load) {
+  for (const w of [600, 700, 800]) document.fonts.load(w + ' 30px Oxanium').catch(() => {});
+}
+requestAnimationFrame(frame);
+
+// ---------- debug hooks (used by automated tests; harmless in play) ----------
+window.GG = {
+  game, simulate, solve, genSystem, difficulty, previewT, straightShotWins,
+  fling: (vx, vy) => fling(vx, vy),
+  flingSolution: () => { const s = game.sys.sol; fling(s.vx, s.vy); return s; },
+  newRun,
+};
+</script>
+</body>
+</html>
