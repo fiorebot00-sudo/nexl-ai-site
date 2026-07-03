@@ -33,6 +33,18 @@ const MIN_V = 160, MAX_V = 720;   // launch speed range (units/s); top trimmed �
                                   // power felt "super quick" (Mike, 2026-07-02)
 const PT = 50;                    // display points per internal point (D-adr-022):
                                   // internal math stays 1s, the player sees 50s
+// Scoring economy (D-adr-025). All values in INTERNAL units (×PT at display), so
+// every score is an integer×50 by construction. One block to tune (LocalThunk:
+// "balance by changing one number"). Base = what banks to the career/station;
+// the multiplier/streak amplify only the per-run BEST chase (decision: base-only
+// to the station, so the 16-stage grind isn't blown through in one good run).
+const SCORE = {
+  SAT: 1,          // satellite pickup           → +50   (also banks to career)
+  CHAIN_STEP: 2,   // nth graze in a flight pays 2n → +100·n (BEST only)
+  ESCAPE_BASE: 2,  // escape base per system#     → +100·sys (banks to career)
+  MULT_CAP: 5,     // flight multiplier ceiling (1 + grazes)
+  STREAK_STEP: 5,  // per clean consecutive escape → +250·s (BEST only)
+};
 const DRAG_FULL = 250;            // drag distance (px) for full power
 const MAX_FLIGHT = 10;            // s; after this the craft is "lost" (orbit trap)
 const G_BASE = 3.0e6;             // gravity scale for a 24u-radius planet at gscale 1
@@ -640,7 +652,11 @@ const game = {
   grazed: null,        // per-planet assist flags for current flight
   minGateDist: 1e9,
   bestBeaten: false,   // this run has set a new best (drives gold HUD + seed reroll)
-  satsRun: 0,          // satellites banked this run (scoreboard counter)
+  satsRun: 0,          // satellites banked this run (scoreboard counter + tally)
+  escapeStreak: 0,     // consecutive clean escapes since last ship loss (D-adr-025)
+  deepestSys: 1,       // deepest system reached this run (end-of-run tally)
+  bestChainVal: 0,     // highest single-flight slingshot chain value this run (units)
+  chainThisFlight: 0,  // running chain value banked in the current flight (units)
   satPunchAt: 0,       // scoreboard satellite pop timer
   scorePunchAt: 0,
   shake: 0,
@@ -662,11 +678,12 @@ const game = {
 };
 
 function loadSystem(depth) {
-  // any slingshot reward still in transit lands now — banked is banked
-  game.zips.forEach(() => { game.score += 1; addCareer(1); });
+  // any slingshot reward still in transit lands now — banked is banked (BEST only)
+  game.zips.forEach(z => { game.score += z.val; });
   game.zips = [];
   game.sys = PLAYGROUND ? playgroundSystem(depth) : genSystem(depth, game.runSeed);
   game.depth = depth;
+  game.deepestSys = Math.max(game.deepestSys || 1, depth);
   game.state = 'aim';
   game.craft = { x: PAD.x, y: PAD.y, vx: 0, vy: 0, t: 0 };
   game.trail = [];
@@ -729,8 +746,7 @@ function loadSystem(depth) {
 }
 
 function newRun() {
-  // in-transit slingshot rewards: the run's score dies with it, career keeps them
-  game.zips.forEach(() => addCareer(1));
+  // in-transit slingshot rewards die with the run (chains are BEST-only, D-adr-025)
   game.zips = [];
   game.partUnlocked = null;
   // Course persistence (D-adr-014): retries replay the same course so deaths are
@@ -745,6 +761,10 @@ function newRun() {
   game.score = 0;
   game.dispScore = 0;
   game.satsRun = 0;
+  game.escapeStreak = 0;
+  game.deepestSys = 1;
+  game.bestChainVal = 0;
+  game.chainThisFlight = 0;
   loadSystem(1);
 }
 
@@ -776,6 +796,7 @@ function fling(vx, vy) {
   game.sys.layout.sats.forEach(s => { s.got = false; });
   game.satsThisFlight = 0;
   game.grazesThisFlight = 0;
+  game.chainThisFlight = 0;
   game.hintsDone = true;
   game.freezeT = performance.now() / 1000;   // signature motion freezes in flight
   sfx.launch();
@@ -784,6 +805,7 @@ function fling(vx, vy) {
 function endRun(byCrash, x, y) {
   game.state = 'dead';
   game.lives--;                       // a ship is lost; retry same system if any remain
+  game.escapeStreak = 0;              // losing a ship breaks the perfect-run streak (D-adr-025)
   game.deadAt = performance.now();
   game.endT = game.craft.t;
   // orbit clock resumes live exactly where flight physics left it — no jump
@@ -817,9 +839,23 @@ function endRun(byCrash, x, y) {
 
 function escapeGate() {
   const assists = game.grazed.filter(Boolean).length;
-  const points = 1;                  // slingshots banked in-flight (D-adr-021)
-  game.score += points;
-  addCareer(points);
+  // Escape economy (D-adr-025, RESEARCH-SCORING §Recommended):
+  //   flight multiplier = 1 + grazes-this-flight (capped)
+  //   escape bonus       = ESCAPE_BASE · system# · mult   → banks to BEST
+  //   streak bonus       = STREAK_STEP · consecutive clean escapes → BEST
+  // Only the FLAT base (ESCAPE_BASE · system#, mult/streak stripped) banks to the
+  // career/station — decision (a): the 16-stage grind isn't inflated by a hot run.
+  const mult = Math.min(1 + assists, SCORE.MULT_CAP);
+  const escapeBase = SCORE.ESCAPE_BASE * game.depth;   // career-banked portion
+  const escapeUnits = escapeBase * mult;               // full run-score portion
+  game.escapeStreak++;
+  const streakUnits = game.escapeStreak > 1 ? SCORE.STREAK_STEP * game.escapeStreak : 0;
+  game.score += escapeUnits + streakUnits;
+  addCareer(escapeBase);                               // base only to the station
+  game.deepestSys = Math.max(game.deepestSys, game.depth);
+  game.escapeMult = mult;                              // for the Phase-2 gate reveal
+  game.escapeUnits = escapeUnits;
+  game.streakUnits = streakUnits;
   game.scorePunchAt = performance.now();
   game.state = 'win';
   game.winAt = performance.now();
@@ -841,12 +877,19 @@ function escapeGate() {
   game.winCraft = { x: c0.x, y: c0.y, vx: Math.cos(ang0) * spd0, vy: Math.sin(ang0) * spd0,
                     d0: Math.max(ad0, gw0.r * 0.5) };
   game.winDone = false;
+  // Staged gate reveal (D-adr-026, float-sequence per RESEARCH-SCORING §3): the
+  // beat is SYSTEM → ×mult → +resolved → streak, each cued 0.22s later with an
+  // ascending bank tick — the deferred "+total" is the tension release (Balatro).
   const g = game.sys.layout.gate;
-  game.floats.push({
-    x: g.x, y: g.y - g.r - 14,
-    txt: '+' + PT + (assists ? '  ·  ' + assists + ' SLINGSHOT' + (assists > 1 ? 'S' : '') + ' BANKED' : ''),
-    vy: -34, life: 1.1, size: assists ? 24 : 19, color: assists ? '#ffd166' : '#e8f0ff',
-  });
+  const ay = Math.min(Math.max(g.y - g.r - 20, 150), VH - 150);
+  const seq = [{ txt: 'SYSTEM ' + game.depth, size: 16, color: '#8fa2c8' }];
+  if (mult > 1) seq.push({ txt: 'ASSIST ×' + mult, size: 20, color: '#ffd166', tick: 1 });
+  seq.push({ txt: '+' + (escapeUnits * PT), size: 27, color: '#ffd166', tick: 2 });
+  if (streakUnits) seq.push({ txt: 'STREAK ×' + game.escapeStreak + '  +' + (streakUnits * PT), size: 17, color: '#7ef0ff', tick: 4 });
+  seq.forEach((s, k) => game.floats.push({
+    x: g.x, y: ay - k * 28, txt: s.txt, vy: -22, life: 1.3, size: s.size, color: s.color,
+    delay: k * 0.22, sfx: s.tick ? (() => sfx.bank(s.tick)) : null,
+  }));
   const isNewBest = saveBest();
   if (isNewBest && !game.bestBeaten) {   // fire the moment BEST falls, mid-run
     game.bestBeaten = true;
@@ -919,12 +962,19 @@ function tick(dt) {
         // slingshot pays NOW (D-adr-021), staged per RESEARCH-SCORE-FX P1c:
         // pop-and-hold at the graze -> comet travel -> banked on impact.
         // Launches queue >=130ms apart so multi-grazes serialize (score-motor).
+        // nth graze in a flight is worth CHAIN_STEP·n units — escalating links so
+        // the comet/SFX crescendo is honest (D-adr-025, RESEARCH-SCORING §3).
+        const n = game.grazesThisFlight;
+        const val = SCORE.CHAIN_STEP * n;    // units; banks to BEST only (not career)
         const lastZip = game.zips[game.zips.length - 1];
         const zt0 = Math.max(performance.now(), lastZip ? lastZip.t0 + 130 : 0);
         game.zipCount = (game.zipCount || 0) + 1;
         game.zips.push({ x0: c.x, y0: c.y, t0: zt0, hold: 0.30, dur: 0.62,
-                         bend: (game.zipCount % 2 ? 1 : -1) * 110, seed: game.zipCount * 7 });
-        game.floats.push({ x: p.x, y: p.y - p.r - 12, txt: 'SLINGSHOT!', vy: -26, life: 0.8, size: 14, color: '#ffd166' });
+                         bend: (game.zipCount % 2 ? 1 : -1) * 110, seed: game.zipCount * 7,
+                         val });
+        game.floats.push({ x: p.x, y: p.y - p.r - 12,
+          txt: '+' + (val * PT) + (n > 1 ? '  ×' + n : ''),
+          vy: -26, life: 0.8, size: 14, color: '#ffd166' });
         sfx.assist(game.grazesThisFlight - 1);
         if (game.grazesThisFlight === 3) {
           // earned peak, once per flight (Peggle rule): brief world slow-mo
@@ -944,11 +994,11 @@ function tick(dt) {
       const dx = c.x - sx, dy = c.y - sy;
       if (dx * dx + dy * dy < 16 * 16) {
         s.got = true;
-        game.score += 1;
+        game.score += SCORE.SAT;               // +50, banks to career (base value)
         game.satsThisFlight = (game.satsThisFlight || 0) + 1;
         game.satsRun++;
         game.satPunchAt = performance.now();
-        addCareer(1);
+        addCareer(SCORE.SAT);
         game.scorePunchAt = performance.now();
         game.floats.push({ x: sx, y: sy - 12, txt: '+' + PT + ' SAT', vy: -26, life: 0.9, size: 15, color: '#ffd166' });
         sfx.assist();
@@ -1003,8 +1053,9 @@ function tick(dt) {
     const z = game.zips[i];
     if ((performance.now() - z.t0) / 1000 >= z.hold + z.dur) {
       game.zips.splice(i, 1);
-      game.score += 1;
-      addCareer(1);
+      game.score += z.val;                    // chains bank to BEST only (D-adr-025)
+      game.chainThisFlight += z.val;
+      if (game.chainThisFlight > game.bestChainVal) game.bestChainVal = game.chainThisFlight;
       const nb = performance.now();
       game.bankStreak = nb - (game.lastBankAt || -1e9) < 2000 ? (game.bankStreak || 0) + 1 : 0;
       game.lastBankAt = nb;
@@ -1027,6 +1078,8 @@ function tick(dt) {
   }
   for (let i = game.floats.length - 1; i >= 0; i--) {
     const f = game.floats[i];
+    if (f.delay > 0) { f.delay -= dt; continue; }   // staged reveal: hold until cue
+    if (!f.born) { f.born = true; if (f.sfx) f.sfx(); }
     f.y += f.vy * dt; f.life -= dt;
     if (f.life <= 0) game.floats.splice(i, 1);
   }
@@ -2575,6 +2628,23 @@ function draw() {
       ctx.globalAlpha = 1;
     }
   }
+  // BEST-chase countdown chip: shows in striking distance (~70% of BEST) and
+  // amber-pulses within ~one boosted escape of the record — near-miss surfacing
+  // tuned to fire on decent runs (D-adr-026, RESEARCH-SCORING §1.6). Replaces the
+  // per-system tip while it's up (a live record chase beats a static hint).
+  game.chaseChipShown = false;
+  if (!PLAYGROUND && best > 0 && !game.bestBeaten && game.score >= 0.7 * best
+      && game.score < best && (game.state === 'aim' || game.state === 'flight')) {
+    const delta = (best - game.score) * PT;
+    const near = (best - game.score) <= SCORE.ESCAPE_BASE * game.depth * 3;
+    ctx.textAlign = 'center';
+    ctx.font = '800 13px Oxanium, -apple-system, sans-serif';
+    ctx.globalAlpha = near ? (0.7 + 0.3 * Math.sin(now * 6)) : 0.85;
+    ctx.fillStyle = near ? '#ffd166' : '#7ef0ff';
+    ctx.fillText('BEST  −' + delta, VW / 2, 63);
+    ctx.globalAlpha = 1;
+    game.chaseChipShown = true;
+  }
   // the hangar: remaining ships, bottom-left
   for (let i = 0; i < 5; i++) {
     const lx = 26 + i * 19, ly = VH - 54;
@@ -2599,7 +2669,7 @@ function draw() {
   ctx.fillRect(VW / 2 - 40, VH - 20, 80 * Math.min(frac, 1), 4);
 
   // one tip per system, top of the sky (stable across retries of the system)
-  if (game.state === 'aim') {
+  if (game.state === 'aim' && !game.chaseChipShown) {
     ctx.globalAlpha = 0.55;
     ctx.fillStyle = '#8fa2c8';
     ctx.font = '600 12px Oxanium, -apple-system, sans-serif';
@@ -2658,9 +2728,26 @@ function draw() {
       ctx.font = '800 22px Oxanium, -apple-system, sans-serif';
       ctx.fillText('NEW BEST!', VW / 2, VH / 2 - 6);
     }
-    ctx.font = '600 16px Oxanium, -apple-system, sans-serif';
-    ctx.fillStyle = game.bestBeaten ? '#ffd166' : '#8fa2c8';
-    ctx.fillText(game.score * PT + ' PTS   ·   BEST ' + best * PT, VW / 2, VH / 2 + 26);
+    // itemized end-of-run tally (pinball end-of-ball receipt, D-adr-026): show
+    // where the run's score came from, then the TOTAL and the record.
+    let ty = VH / 2 + 14;
+    ctx.font = '600 13px Oxanium, -apple-system, sans-serif';
+    const rows = [
+      ['SATELLITES', game.satsRun + ' × 50 = ' + (game.satsRun * SCORE.SAT * PT)],
+      ['BEST CHAIN', '+' + (game.bestChainVal * PT)],
+      ['DEEPEST SYSTEM', String(game.deepestSys)],
+    ];
+    rows.forEach((r, i) => {
+      ctx.textAlign = 'right'; ctx.fillStyle = '#8fa2c8';
+      ctx.fillText(r[0], VW / 2 - 8, ty + i * 17);
+      ctx.textAlign = 'left'; ctx.fillStyle = '#cdd8ee';
+      ctx.fillText(r[1], VW / 2 + 8, ty + i * 17);
+    });
+    ctx.textAlign = 'center';
+    ty += rows.length * 17 + 12;
+    ctx.font = '800 19px Oxanium, -apple-system, sans-serif';
+    ctx.fillStyle = game.bestBeaten ? '#ffd166' : '#e8f0ff';
+    ctx.fillText('RUN  ' + game.score * PT + '   ·   BEST  ' + best * PT, VW / 2, ty);
     if (game.solDemo) {
       // the winning shot's numbers, player-cyan: this is a flyable instruction
       const sspd = Math.hypot(game.solDemo.vx, game.solDemo.vy);
@@ -2668,10 +2755,10 @@ function draw() {
       const sthr = Math.round(Math.min((sspd - MIN_V) / (MAX_V - MIN_V), 1) * 100);
       ctx.fillStyle = '#7ef0ff';
       ctx.font = '600 13px Oxanium, -apple-system, sans-serif';
-      ctx.fillText('THE SHOT   ∠ ' + sang.toFixed(1) + '° · V ' + Math.round(sspd) + ' · THR ' + sthr + '%', VW / 2, VH / 2 + 54);
+      ctx.fillText('THE SHOT   ∠ ' + sang.toFixed(1) + '° · V ' + Math.round(sspd) + ' · THR ' + sthr + '%', VW / 2, ty + 28);
       ctx.font = '600 11px Oxanium, -apple-system, sans-serif';
       ctx.fillStyle = '#8fa2c8';
-      ctx.fillText('it was makeable — watch the marked flight', VW / 2, VH / 2 + 74);
+      ctx.fillText('it was makeable — watch the marked flight', VW / 2, ty + 46);
     }
     if (performance.now() - game.deadAt > 350) {
       ctx.globalAlpha = 0.55 + 0.3 * Math.sin(now * 4);
@@ -2846,6 +2933,7 @@ function draw() {
   ctx.textAlign = 'center';
   ctx.lineJoin = 'round';
   for (const f of game.floats) {
+    if (f.delay > 0) continue;                       // not yet revealed
     ctx.globalAlpha = Math.min(f.life / 0.4, 1);
     ctx.font = '800 ' + f.size + 'px Oxanium, -apple-system, sans-serif';
     ctx.strokeStyle = 'rgba(6,9,16,0.85)'; ctx.lineWidth = 3;
@@ -2902,6 +2990,7 @@ requestAnimationFrame(frame);
 // ---------- debug hooks (used by automated tests; harmless in play) ----------
 window.GG = {
   game, simulate, solve, genSystem, difficulty, previewT, straightShotWins,
+  SCORE, PT, escapeGate, endRun, loadSystem,
   fling: (vx, vy) => fling(vx, vy),
   flingSolution: () => { const s = game.sys.sol; fling(s.vx, s.vy); return s; },
   newRun,
