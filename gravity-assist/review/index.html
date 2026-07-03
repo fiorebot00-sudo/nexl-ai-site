@@ -118,7 +118,7 @@
         <div class="leg"><div class="k">2 &middot; Hints</div><div class="v">Visual path nudge</div><span class="tag plan">Plan &rarr; chat</span></div>
         <div class="leg"><div class="k">3 &middot; Screen shake</div><div class="v">Crashes hit harder</div><span class="tag mock">Live below</span></div>
         <div class="leg"><div class="k">4 &middot; Satellites</div><div class="v">A form per biome</div><span class="tag mock">Gallery below</span></div>
-        <div class="leg"><div class="k">5 &middot; Binary star</div><div class="v">Deeper backdrops</div><span class="tag mock">2 biomes below</span></div>
+        <div class="leg"><div class="k">5 &middot; Binary star</div><div class="v">Deeper backdrops</div><span class="tag mock">Crimson Shoals</span></div>
         <div class="leg"><div class="k">6 &middot; Ambient traffic</div><div class="v">Busier skies</div><span class="tag mock">Gallery below</span></div>
       </div>
     </div>
@@ -139,7 +139,7 @@
       </div>
       <div class="readout" id="shake-read">Tap a button to fly the ship into the planet.</div>
     </div></div>
-    <div class="rec"><div class="h">Recommended</div><p>Peak <code>&plusmn;9px</code>, a <code>6px</code> directional kick along the impact vector, decaying over <code>0.42s</code> with a 60&nbsp;ms freeze on contact (hitstop) &mdash; applied to the <b>whole screen including the HUD</b>. Crash-only &mdash; never on a wormhole miss or a lost-in-space timeout, so the shake stays a pure "you hit something" signal. Scales down on the smallest phones.</p></div>
+    <div class="rec"><div class="h">Your call, locked &mdash; Recommended</div><p>Peak <code>&plusmn;9px</code>, a <code>6px</code> directional kick along the impact vector, decaying over <code>0.42s</code> with a 60&nbsp;ms freeze on contact (hitstop) &mdash; applied to the <b>whole screen including the HUD</b>. Crash-only &mdash; never on a wormhole miss or a lost-in-space timeout, so the shake stays a pure "you hit something" signal. Scales down on the smallest phones.</p></div>
   </section>
 
   <!-- 4 &middot; SATELLITES -->
@@ -155,9 +155,9 @@
   <section>
     <div class="eyebrow"><span class="num g">5</span><span class="lbl">Binary star &middot; background depth</span></div>
     <h2>A two-sun system, sitting far back</h2>
-    <p class="intent">One backdrop concept &mdash; a primary star and a brighter companion sharing a faint tidal bridge. <b>Stationary and softened</b> so it reads as deep background, never a focal point. Placed in just two biomes: Violet Deep (classic) and Crimson Shoals (warm giant + white dwarf).</p>
+    <p class="intent">A warm giant + white dwarf sharing a faint tidal bridge. <b>Stationary and softened</b> so it reads as deep background, never a focal point. <b>Crimson Shoals only.</b> (The third glow lower-right is a system planet, not a star &mdash; reads fine over a real reef.)</p>
     <div class="grid-bin" id="bin-grid"></div>
-    <div class="rec"><div class="h">Your call, locked</div><p>Placed only in <b>Violet Deep</b> (classic) and <b>Crimson Shoals</b> (warm giant + white dwarf), as a background <em>signature</em> on some systems in those biomes. Stationary, alpha-capped, softened &mdash; it deepens the sky without ever competing with the planets you're reading.</p></div>
+    <div class="rec"><div class="h">Your call, locked</div><p>Placed only in <b>Crimson Shoals</b> (warm giant + white dwarf), as a background <em>signature</em> on some systems in that biome. Stationary, alpha-capped, softened &mdash; it deepens the sky without ever competing with the planets you're reading. The 3-star read is fine (the third is a planet).</p></div>
   </section>
 
   <!-- 6 &middot; AMBIENT TRAFFIC -->
@@ -174,8 +174,8 @@
   </section>
 
   <div class="foot">
-    <b>Locked in:</b> lives = start at 6, +1 per new biome, 8-ship cap (A+D). Hints = progressive visual guidance corridor after 2 fails. Satellites = all 11 (Crimson Shoals now the amphora). Binary star = Violet Deep + Crimson Shoals, stationary &amp; soft.<br><br>
-    <b>Still open:</b> which shake intensity (Recommended vs Heavy), and whether the ambient frequency bump feels right. Nothing is in the live game yet &mdash; I'll fold the approved set into one build.
+    <b>Locked in:</b> shake = Recommended (&plusmn;9px, whole screen). Lives = start at 6, +1 per new biome, 8-ship cap (A+D). Hints = progressive visual guidance corridor after 2 fails. Satellites = all 11 (Crimson Shoals = amphora). Binary star = Crimson Shoals only, stationary &amp; soft.<br><br>
+    <b>Still open:</b> just the ambient frequency bump (pNat .28&rarr;.45, pUnnat .08&rarr;.15, up to 2 at once) &mdash; good to go, or leave as-is? Nothing is in the live game yet &mdash; I'll fold the approved set into one build.
   </div>
 </div>
 
@@ -323,7 +323,7 @@ function star(ctx,x,y,r,col){const c=col.length===7?col:'#ffffff';
  const g=ctx.createRadialGradient(x,y,0,x,y,r*4.4);g.addColorStop(0,'rgba('+hx(c)+',.5)');g.addColorStop(.28,'rgba('+hx(c)+',.15)');g.addColorStop(1,'rgba('+hx(c)+',0)');ctx.fillStyle=g;ctx.beginPath();ctx.arc(x,y,r*4.4,0,7);ctx.fill();
  const g2=ctx.createRadialGradient(x,y,0,x,y,r);g2.addColorStop(0,'rgba(255,255,255,.55)');g2.addColorStop(1,'rgba('+hx(c)+',0)');ctx.fillStyle=g2;ctx.beginPath();ctx.arc(x,y,r,0,7);ctx.fill();}
 (function(){const grid=document.getElementById('bin-grid');if(!grid)return;
- const picks=[{b:BIOMES[2],mode:'classic',t:'Violet Deep \u2014 classic'},{b:BIOMES[7],mode:'ember',t:'Crimson Shoals \u2014 warm giant + dwarf'}];
+ const picks=[{b:BIOMES[7],mode:'ember',t:'Crimson Shoals \u2014 warm giant + white dwarf'}];
  picks.forEach((p,i)=>{const tile=document.createElement('div');tile.className='tile';
    const cv=document.createElement('canvas');cv.height=170;tile.appendChild(cv);
    const cap=document.createElement('div');cap.className='cap';cap.innerHTML='<div class="n">'+p.t+'</div>';tile.appendChild(cap);grid.appendChild(tile);
@@ -336,11 +336,18 @@ function star(ctx,x,y,r,col){const c=col.length===7?col:'#ffffff';
 function amb(ctx,w,h,t,type,hue){const cx=w*0.5,cy=h*0.5;const dr=(t*0.3)%1;
  ctx.globalAlpha=.75;
  if(type==='comet'){const x=cx,y=cy;ctx.strokeStyle=hue;ctx.lineWidth=3;ctx.lineCap='round';const g=ctx.createLinearGradient(x,y,x+34,y+12);g.addColorStop(0,hue);g.addColorStop(1,'rgba('+hx(hue)+',0)');ctx.strokeStyle=g;ctx.beginPath();ctx.moveTo(x,y);ctx.lineTo(x+34,y+12);ctx.stroke();ctx.fillStyle='#dceeff';ctx.beginPath();ctx.arc(x,y,2.5,0,7);ctx.fill();}
- else if(type==='asteroid'){ctx.save();ctx.translate(cx,cy);ctx.rotate(t*.5);ctx.fillStyle=lerpC('#6e6a66',hue,.25);ctx.beginPath();for(let k=0;k<5;k++){const a=k*1.3,d=k%2?7:11;ctx[k?'lineTo':'moveTo'](Math.cos(a)*d,Math.sin(a)*d);}ctx.closePath();ctx.fill();ctx.restore();}
+ else if(type==='asteroid'){ctx.save();ctx.translate(cx,cy);ctx.rotate(t*.32);ctx.fillStyle=lerpC('#6e6a66',hue,.22);const rr=mulberry32(4231);const lumps=6;ctx.beginPath();for(let k=0;k<lumps;k++){const a=rr()*6.28,ld=rr()*4.2,lr=3.6+rr()*3.4;ctx.moveTo(Math.cos(a)*ld+lr,Math.sin(a)*ld);ctx.arc(Math.cos(a)*ld,Math.sin(a)*ld,lr,0,7);}ctx.fill();ctx.fillStyle='rgba(0,0,0,.2)';ctx.beginPath();ctx.arc(-2.5,1.5,2,0,7);ctx.fill();ctx.beginPath();ctx.arc(3,-2,1.2,0,7);ctx.fill();ctx.restore();}
  else if(type==='galaxy'){ctx.save();ctx.translate(cx,cy);ctx.rotate(t*.15);ctx.strokeStyle='rgba('+hx(hue)+',.35)';ctx.lineWidth=3;for(let k=0;k<3;k++){ctx.beginPath();ctx.arc(0,0,6+k*7,k*2.1,k*2.1+3.2);ctx.stroke();}const g=ctx.createRadialGradient(0,0,0,0,0,7);g.addColorStop(0,'rgba(255,245,230,.5)');g.addColorStop(1,'rgba(255,245,230,0)');ctx.fillStyle=g;ctx.beginPath();ctx.arc(0,0,7,0,7);ctx.fill();ctx.restore();}
- else if(type==='voyager'){ctx.save();ctx.translate(cx,cy);ctx.strokeStyle='#c9d2da';ctx.lineWidth=1.4;ctx.beginPath();ctx.moveTo(-11,3);ctx.lineTo(8,-3);ctx.stroke();ctx.fillStyle='#96a0a9';ctx.fillRect(-3,-3,6,6);ctx.strokeStyle='#e8ecf0';ctx.beginPath();ctx.arc(6,-5,4,0,7);ctx.stroke();ctx.restore();}
+ else if(type==='voyager'){ctx.save();ctx.translate(cx,cy);ctx.rotate(-.3);ctx.lineCap='round';
+   ctx.strokeStyle='#8a929b';ctx.lineWidth=1;ctx.beginPath();ctx.moveTo(-1,-1);ctx.lineTo(-19,-13);ctx.stroke();
+   ctx.beginPath();ctx.moveTo(2,3);ctx.lineTo(17,11);ctx.stroke();
+   ctx.fillStyle='#7a828b';for(let k=0;k<3;k++){ctx.fillRect(8+k*3.4,4.5+k*2.3,2.6,2.6);}
+   ctx.fillStyle='#aab2bb';ctx.strokeStyle='#dfe6ec';ctx.lineWidth=.8;ctx.beginPath();for(let k=0;k<6;k++){const a=k*1.047+.5;ctx[k?'lineTo':'moveTo'](Math.cos(a)*3.8,Math.sin(a)*3.8);}ctx.closePath();ctx.fill();ctx.stroke();
+   ctx.fillStyle='rgba(232,238,244,.92)';ctx.strokeStyle='#c2cad2';ctx.beginPath();ctx.arc(0,-6.5,7,0,7);ctx.fill();ctx.stroke();
+   ctx.fillStyle='rgba(120,130,140,.35)';ctx.beginPath();ctx.arc(0,-6.5,4.3,0,7);ctx.fill();
+   ctx.strokeStyle='#c2cad2';ctx.lineWidth=.8;ctx.beginPath();ctx.moveTo(0,-6.5);ctx.lineTo(0,-13.5);ctx.stroke();ctx.fillStyle='#eef3f8';ctx.fillRect(-1,-14.5,2,2);ctx.restore();}
  else if(type==='ufo'){ctx.save();ctx.translate(cx+Math.sin(t*2)*10,cy);ctx.fillStyle='rgba('+hx(hue)+',.8)';ctx.beginPath();ctx.ellipse(0,0,13,4.5,0,0,7);ctx.fill();ctx.fillStyle='#b5d9bd';ctx.beginPath();ctx.ellipse(0,-3,6,4,0,Math.PI,0);ctx.fill();ctx.fillStyle=hue;ctx.globalAlpha=.4;ctx.beginPath();ctx.moveTo(-9,3);ctx.lineTo(9,3);ctx.lineTo(5,14);ctx.lineTo(-5,14);ctx.closePath();ctx.fill();ctx.restore();}
- else if(type==='meteor'){ctx.strokeStyle='rgba(220,235,255,.7)';ctx.lineWidth=1.5;ctx.lineCap='round';for(let k=0;k<5;k++){const off=((t*90+k*40)%160)-30;ctx.globalAlpha=.6;ctx.beginPath();ctx.moveTo(off,10+k*14-20);ctx.lineTo(off-16,18+k*14-20);ctx.stroke();}}
+ else if(type==='meteor'){ctx.lineCap='round';const L=[11,24,15,31,19,13],SP=[72,116,88,134,98,80];for(let k=0;k<6;k++){const len=L[k],off=((t*SP[k]+k*57)%(w+90))-45,y=10+k*12-16,dx=-len*0.9,dy=len*0.42;ctx.globalAlpha=.6;const g=ctx.createLinearGradient(off,y,off+dx,y+dy);g.addColorStop(0,'rgba(232,242,255,.9)');g.addColorStop(1,'rgba(210,228,255,0)');ctx.strokeStyle=g;ctx.lineWidth=1.4;ctx.beginPath();ctx.moveTo(off,y);ctx.lineTo(off+dx,y+dy);ctx.stroke();ctx.fillStyle='#eaf2ff';ctx.beginPath();ctx.arc(off,y,1.1,0,7);ctx.fill();}ctx.globalAlpha=1;}
  else if(type==='ringed'){ctx.save();ctx.translate(cx,cy);planet(ctx,0,0,10,lerpC('#c9a26a',hue,.3),'#3a2c18');ctx.strokeStyle='rgba('+hx(hue)+',.6)';ctx.lineWidth=2;ctx.beginPath();ctx.ellipse(0,0,20,6,-.4,0,7);ctx.stroke();ctx.restore();}
  else if(type==='aurora'){const g=ctx.createLinearGradient(0,cy-18,0,cy+18);g.addColorStop(0,'rgba('+hx(hue)+',0)');g.addColorStop(.5,'rgba('+hx(hue)+',.3)');g.addColorStop(1,'rgba('+hx(hue)+',0)');ctx.fillStyle=g;ctx.beginPath();for(let x=0;x<=w;x+=6){const y=cy+Math.sin(x*.05+t)*8;ctx[x?'lineTo':'moveTo'](x,y-9);}for(let x=w;x>=0;x-=6){const y=cy+Math.sin(x*.05+t)*8;ctx.lineTo(x,y+9);}ctx.closePath();ctx.fill();}
  else if(type==='sail'){ctx.save();ctx.translate(cx,cy);ctx.rotate(-.3);ctx.fillStyle='rgba('+hx(hue)+',.18)';ctx.strokeStyle='rgba('+hx(hue)+',.6)';ctx.lineWidth=1;ctx.beginPath();ctx.rect(-14,-14,28,28);ctx.fill();ctx.stroke();ctx.beginPath();ctx.moveTo(-14,0);ctx.lineTo(14,0);ctx.moveTo(0,-14);ctx.lineTo(0,14);ctx.stroke();ctx.fillStyle='#e8ecf0';ctx.fillRect(-2,14,4,8);ctx.restore();}
