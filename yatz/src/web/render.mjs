@@ -1,185 +1,311 @@
-const PIP_LABELS = {
-  1: "one",
-  2: "two",
-  3: "three",
-  4: "four",
-  5: "five",
-  6: "six",
+const SHORT_LABELS = {
+  threeKind: "3 Kind",
+  fourKind: "4 Kind",
+  smallStraight: "Sm Straight",
+  largeStraight: "Lg Straight",
 };
 
-export function renderApp(root, model) {
-  root.replaceChildren(
-    renderHeader(model),
-    renderBoard(model),
-  );
-}
+// Cube orientation (rotateX, rotateY) that brings each face value to the front.
+const FACE_ORIENTATIONS = {
+  1: [0, 0],
+  2: [-90, 0],
+  3: [0, -90],
+  4: [0, 90],
+  5: [90, 0],
+  6: [0, 180],
+};
 
-function renderHeader({ game, totals, message, onNewGame }) {
-  const header = element("header", "app-header");
-  const titleGroup = element("div", "title-group");
-  titleGroup.append(
-    element("p", "eyebrow", "Portable dice tactics"),
-    element("h1", "", "Yatz"),
-  );
+const FACE_PLACEMENTS = {
+  1: "translateZ(var(--die-half))",
+  2: "rotateX(90deg) translateZ(var(--die-half))",
+  3: "rotateY(90deg) translateZ(var(--die-half))",
+  4: "rotateY(-90deg) translateZ(var(--die-half))",
+  5: "rotateX(-90deg) translateZ(var(--die-half))",
+  6: "rotateY(180deg) translateZ(var(--die-half))",
+};
 
-  const stats = element("section", "stats", null, { "aria-label": "Game status" });
-  stats.append(
-    statBlock("Turn", game.status === "complete" ? "Done" : String(game.turn)),
-    statBlock("Rolls", `${game.rollsUsed}/${game.config.maxRolls}`),
-    statBlock("Score", String(totals.total)),
-  );
+export function mountApp(root, { categories, maxRolls, onRoll, onHoldDie, onScore, onNewGame, onToggleMute }) {
+  root.replaceChildren();
 
-  const actions = element("div", "header-actions");
-  actions.append(button("New game", "button subtle", onNewGame));
+  // --- Status strip -------------------------------------------------------
+  const strip = element("header", "strip");
+  const wordmark = element("span", "wordmark", "YATZ");
+  const scoreBlock = element("div", "strip-score");
+  const scoreValue = element("strong", "strip-score-value", "0");
+  scoreBlock.append(element("span", "strip-score-label", "Score"), scoreValue);
+  const rollPips = element("div", "roll-pips", null, { "aria-label": "Rolls left" });
+  const pipDots = [];
+  for (let i = 0; i < maxRolls; i += 1) {
+    const dot = element("span", "roll-pip");
+    pipDots.push(dot);
+    rollPips.append(dot);
+  }
+  const muteButton = iconButton("mute", "Toggle sound", onToggleMute);
+  const newGameButton = iconButton("restart", "New game", onNewGame);
+  newGameButton.append(svgRestart());
+  strip.append(wordmark, scoreBlock, rollPips, element("span", "strip-spacer"), muteButton, newGameButton);
 
-  header.append(titleGroup, stats, actions, element("p", "message", message));
-  return header;
-}
+  const srStatus = element("p", "sr-only", "Roll to start.", { "aria-live": "polite" });
 
-function renderBoard(model) {
-  const board = element("section", "game-board");
-  const playColumn = element("div", "play-column");
-  playColumn.append(renderRollTable(model), renderDicePanel(model));
-  board.append(playColumn, renderScorePanel(model));
-  return board;
-}
+  // --- Table --------------------------------------------------------------
+  const table = element("section", "table", null, { "aria-label": "Roll table" });
+  const felt = element("div", "felt");
+  const diceLayer = element("div", "dice-layer", null, { "aria-label": "Dice" });
+  const rack = element("div", "rack", null, { "aria-label": "Held dice rack" });
+  const rackSlots = [];
+  for (let i = 0; i < 5; i += 1) {
+    const slot = element("span", "rack-slot");
+    rackSlots.push(slot);
+    rack.append(slot);
+  }
+  const spotlight = element("div", "spotlight");
+  const yatzStamp = element("div", "yatz-stamp", "YATZ");
+  const shine = element("div", "felt-shine");
+  felt.append(diceLayer, rack, spotlight, shine, yatzStamp);
 
-function renderRollTable({
-  game,
-  rollingDice,
-  holdingDice,
-  clearingDice,
-  clearingDiceValues,
-  rollAnimation,
-  isClearingTurn,
-  diePositions,
-  onHoldDie,
-}) {
-  const panel = element("section", "roll-table", null, { "aria-label": "Roll table" });
-  const tableSurface = element("div", "table-surface");
-  const heldRack = element("div", "held-rack", null, { "aria-label": "Held dice rack" });
-  const looseLayer = element("div", "loose-dice-layer", null, { "aria-label": "Dice on table" });
-  const diceValues = clearingDiceValues ?? game.dice;
+  const rail = element("div", "rail");
+  const rollButton = button("Roll dice", "roll-button", onRoll);
+  rail.append(rollButton);
+  table.append(felt, rail);
 
-  game.dice.forEach((_, index) => {
-    heldRack.append(element("span", game.held[index] ? "rack-slot is-filled" : "rack-slot"));
+  // --- Scorecard ----------------------------------------------------------
+  const scorecard = element("section", "scorecard", null, { "aria-label": "Scorecard" });
+  const upperColumn = element("div", "score-column");
+  const lowerColumn = element("div", "score-column");
+  const chips = new Map();
+
+  categories.forEach((category) => {
+    const chip = button("", "chip", () => onScore(category.id));
+    chip.disabled = true;
+    const label = SHORT_LABELS[category.id] ?? category.label;
+    chip.append(element("span", "chip-label", label), element("span", "chip-value", "–"));
+    chips.set(category.id, chip);
+    (category.section === "upper" ? upperColumn : lowerColumn).append(chip);
   });
 
-  diceValues.forEach((value, index) => {
-    const position = diePositions[index] ?? { x: 50, y: 50, r: 0 };
-    const isHeld = game.held[index] && !clearingDice.has(index);
-    const classes = [
-      "die",
-      isHeld ? "is-held" : "is-loose",
-      rollingDice.has(index) ? `is-${rollAnimation === "reroll" ? "rerolling" : "rolling"}` : "",
-      holdingDice.has(index) ? "is-hold-pulse" : "",
-      clearingDice.has(index) ? "is-clearing" : "",
-    ].filter(Boolean).join(" ");
-    const die = button("", classes, () => onHoldDie(index));
-    die.disabled = game.rollsUsed === 0 || game.status === "complete" || isClearingTurn;
-    die.setAttribute("aria-label", value == null ? `Empty die ${index + 1}` : `Die ${index + 1}, ${value}${game.held[index] ? ", held" : ""}`);
-    die.dataset.value = value ?? "";
-    die.style.setProperty("--die-x", `${position.x}%`);
-    die.style.setProperty("--die-y", `${position.y}%`);
-    die.style.setProperty("--die-rotation", `${position.r}deg`);
-    die.append(renderPips(value));
-    looseLayer.append(die);
+  const bonusChip = element("div", "chip bonus-chip");
+  const bonusFill = element("span", "bonus-fill");
+  const bonusValue = element("span", "chip-value", "0/63");
+  bonusChip.append(bonusFill, element("span", "chip-label", "Bonus"), bonusValue);
+  upperColumn.append(bonusChip);
+
+  scorecard.append(upperColumn, lowerColumn);
+
+  // --- End-of-game overlay --------------------------------------------------
+  const endCard = element("div", "end-card");
+  const endTotal = element("strong", "end-total", "0");
+  const endRows = element("div", "end-rows");
+  const endNewGame = button("New game", "roll-button end-new-game", onNewGame);
+  endCard.append(element("span", "end-eyebrow", "Final score"), endTotal, endRows, endNewGame);
+  const endOverlay = element("div", "end-overlay");
+  endOverlay.append(endCard);
+  felt.append(endOverlay);
+
+  root.append(strip, srStatus, table, scorecard);
+
+  // --- Dice ---------------------------------------------------------------
+  const dice = [];
+  for (let i = 0; i < 5; i += 1) {
+    const die = buildDie(i, onHoldDie);
+    dice.push(die);
+    diceLayer.append(die.button);
+  }
+
+  return {
+    diceLayer,
+    felt,
+    dice,
+    rackSlots,
+    rollButton,
+    spotlight,
+    yatzStamp,
+    shine,
+    muteButton,
+    setMuteIcon(muted) {
+      muteButton.replaceChildren(svgSpeaker(muted));
+    },
+    setScore(value) {
+      scoreValue.textContent = String(value);
+    },
+    scoreValueEl: scoreValue,
+    setRollsUsed(used) {
+      pipDots.forEach((dot, i) => dot.classList.toggle("is-spent", i < used));
+    },
+    setRollButton(label, disabled) {
+      rollButton.textContent = label;
+      rollButton.disabled = disabled;
+    },
+    setStatus(text) {
+      srStatus.textContent = text;
+    },
+    setRackSlot(index, filled) {
+      rackSlots[index].classList.toggle("is-filled", filled);
+    },
+    chipRect(categoryId) {
+      return chips.get(categoryId).querySelector(".chip-value").getBoundingClientRect();
+    },
+    updateChip(categoryId, { score, preview, available }) {
+      const chip = chips.get(categoryId);
+      const valueEl = chip.querySelector(".chip-value");
+      chip.classList.toggle("is-scored", score != null);
+      chip.classList.toggle("is-avail", available && score == null);
+      chip.classList.toggle("is-zero", score == null && preview === 0);
+      chip.disabled = !available || score != null;
+      valueEl.textContent = score != null ? String(score) : preview != null ? String(preview) : "–";
+      valueEl.classList.toggle("is-preview", score == null && preview != null);
+    },
+    stampChip(categoryId) {
+      retrigger(chips.get(categoryId), "is-stamping");
+    },
+    shimmerChip(categoryId) {
+      retrigger(chips.get(categoryId), "is-shimmering");
+    },
+    updateBonus(totals, threshold) {
+      const locked = totals.upperBonus > 0;
+      bonusFill.style.width = `${Math.min(100, (totals.upperScore / threshold) * 100)}%`;
+      bonusValue.textContent = locked ? "+35" : `${totals.upperScore}/${threshold}`;
+      bonusChip.classList.toggle("is-locked", locked);
+    },
+    stampBonus() {
+      retrigger(bonusChip, "is-stamping");
+    },
+    showEnd(total, rows) {
+      endRows.replaceChildren(
+        ...rows.map(([label, value]) => {
+          const row = element("div", "end-row");
+          row.append(element("span", "", label), element("span", "", String(value)));
+          return row;
+        }),
+      );
+      endTotal.textContent = "0";
+      endOverlay.classList.add("is-open");
+      return endTotal;
+    },
+    hideEnd() {
+      endOverlay.classList.remove("is-open");
+    },
+  };
+}
+
+function buildDie(index, onHoldDie) {
+  const buttonEl = button("", "die", () => onHoldDie(index));
+  buttonEl.disabled = true;
+  const shadow = element("span", "die-shadow");
+  const arc = element("span", "die-arc");
+  const cube = element("span", "cube");
+  for (let value = 1; value <= 6; value += 1) {
+    const face = element("span", "cube-face");
+    face.style.transform = FACE_PLACEMENTS[value];
+    face.append(renderPips(value));
+    cube.append(face);
+  }
+  arc.append(cube);
+  buttonEl.append(shadow, arc);
+  // toss-arc uses fill:both; drop the class after it ends or its final keyframe
+  // transform keeps overriding the held-die scale on .die-arc.
+  arc.addEventListener("animationend", (event) => {
+    if (event.animationName === "toss-arc") buttonEl.classList.remove("is-tossing");
   });
 
-  tableSurface.append(heldRack, looseLayer);
-  panel.append(element("h2", "", "Table"), tableSurface);
-  return panel;
+  const die = {
+    button: buttonEl,
+    cube,
+    value: null,
+    held: false,
+    spinX: 0,
+    spinY: 0,
+    tiltZ: 0,
+    setPosition(x, y) {
+      buttonEl.style.setProperty("--die-x", `${x}%`);
+      buttonEl.style.setProperty("--die-y", `${y}%`);
+    },
+    // Land on `value` after `turns` extra full tumbles in each axis.
+    spinTo(value, turns = 0) {
+      const [baseX, baseY] = FACE_ORIENTATIONS[value];
+      die.spinX = Math.ceil(die.spinX / 360) * 360 + turns * 360 + baseX;
+      die.spinY = Math.ceil(die.spinY / 360) * 360 + turns * 360 + baseY;
+      cube.style.transform = `rotateZ(${die.tiltZ}deg) rotateX(${die.spinX}deg) rotateY(${die.spinY}deg)`;
+    },
+    setTilt(degrees) {
+      die.tiltZ = degrees;
+    },
+    setInstant(instant) {
+      buttonEl.classList.toggle("is-instant", instant);
+    },
+    toss() {
+      retrigger(buttonEl, "is-tossing");
+    },
+    setHeldStyle(held) {
+      buttonEl.classList.toggle("is-held", held);
+    },
+    setGold(gold) {
+      buttonEl.classList.toggle("is-gold", gold);
+    },
+    show(visible) {
+      buttonEl.classList.toggle("is-hidden", !visible);
+    },
+    setLabel(value, held) {
+      buttonEl.setAttribute(
+        "aria-label",
+        value == null ? `Die ${index + 1}: empty` : `Die ${index + 1}: ${value}${held ? ", held" : ""}`,
+      );
+      buttonEl.setAttribute("aria-pressed", held ? "true" : "false");
+    },
+  };
+  die.show(false);
+  die.setLabel(null, false);
+  return die;
 }
 
-function renderDicePanel({ game, totals, isClearingTurn, onRoll }) {
-  const panel = element("section", "dice-panel", null, { "aria-label": "Dice controls" });
-  const rollsLeft = game.config.maxRolls - game.rollsUsed;
-  const rollButton = button(game.rollsUsed === 0 ? "Roll dice" : `Roll ${rollsLeft} left`, "button primary", onRoll);
-  rollButton.disabled = game.status === "complete" || rollsLeft <= 0 || isClearingTurn;
-
-  const progress = element("div", "bonus-progress");
-  const progressBar = element("span", "bonus-progress-fill");
-  progressBar.style.width = `${Math.min(100, (totals.upperScore / game.config.upperBonusThreshold) * 100)}%`;
-  progress.append(
-    element("div", "bonus-progress-track", progressBar),
-    element(
-      "p",
-      "bonus-copy",
-      totals.upperBonus > 0 ? `Upper bonus locked: +${totals.upperBonus}` : `${totals.upperNeeded} upper points to bonus`,
-    ),
-  );
-
-  panel.append(
-    element("h2", "", "Controls"),
-    element("div", "roll-actions", rollButton),
-    progress,
-    renderTotals(totals),
-  );
-
-  return panel;
-}
-
-function renderScorePanel({ scoreRows, isClearingTurn, onScore }) {
-  const panel = element("section", "score-panel", null, { "aria-label": "Scorecard" });
-  panel.append(element("h2", "", "Scorecard"));
-
-  const upperRows = scoreRows.filter((row) => row.section === "upper");
-  const lowerRows = scoreRows.filter((row) => row.section === "lower");
-
-  panel.append(renderScoreSection("Upper", upperRows, isClearingTurn, onScore), renderScoreSection("Lower", lowerRows, isClearingTurn, onScore));
-  return panel;
-}
-
-function renderScoreSection(title, rows, isClearingTurn, onScore) {
-  const section = element("section", "score-section");
-  section.append(element("h3", "", title));
-
-  const list = element("div", "score-list");
-  rows.forEach((row) => {
-    const rowButton = button("", `score-row ${row.available ? "is-available" : ""} ${row.score != null ? "is-scored" : ""}`, () =>
-      onScore(row.id),
-    );
-    rowButton.disabled = !row.available || isClearingTurn;
-    rowButton.append(
-      element("span", "score-label", row.label),
-      element("span", row.preview != null ? "score-value is-preview" : "score-value", row.score == null ? previewText(row) : String(row.score)),
-    );
-    list.append(rowButton);
-  });
-
-  section.append(list);
-  return section;
+export function buildFlyDie(value, size) {
+  const flyer = element("div", "fly-die");
+  flyer.style.width = `${size}px`;
+  flyer.style.height = `${size}px`;
+  flyer.append(renderPips(value));
+  return flyer;
 }
 
 function renderPips(value) {
-  const pips = element("span", `pips pips-${PIP_LABELS[value] ?? "empty"}`);
-  const count = value ?? 0;
-  for (let index = 0; index < count; index += 1) {
+  const pips = element("span", `pips pips-${value}`);
+  for (let i = 0; i < value; i += 1) {
     pips.append(element("span", "pip"));
   }
   return pips;
 }
 
-function renderTotals(totals) {
-  const panel = element("section", "totals", null, { "aria-label": "Score totals" });
-  panel.append(
-    statBlock("Upper", String(totals.upperScore)),
-    statBlock("Bonus", String(totals.upperBonus + totals.yahtzeeBonus)),
-    statBlock("Lower", String(totals.lowerScore)),
-    statBlock("Open", String(totals.remainingCategories)),
+function retrigger(el, className) {
+  el.classList.remove(className);
+  void el.offsetWidth;
+  el.classList.add(className);
+}
+
+function iconButton(kind, label, onClick) {
+  const item = button("", `icon-button icon-${kind}`, onClick);
+  item.setAttribute("aria-label", label);
+  return item;
+}
+
+function svgSpeaker(muted) {
+  return svg(
+    muted
+      ? "M3 9v6h4l5 4V5L7 9H3zm14.6-1.6L16.2 8.8 18.4 11l-2.2 2.2 1.4 1.4L19.8 12.4l2.2 2.2 1.4-1.4L21.2 11l2.2-2.2-1.4-1.4-2.2 2.2-2.2-2.2z"
+      : "M3 9v6h4l5 4V5L7 9H3zm13.5 3c0-1.8-1-3.3-2.5-4v8c1.5-.7 2.5-2.2 2.5-4zM14 3.2v2.1c2.9.9 5 3.5 5 6.7s-2.1 5.8-5 6.7v2.1c4-.9 7-4.5 7-8.8s-3-7.9-7-8.8z",
   );
-  return panel;
 }
 
-function statBlock(label, value) {
-  const block = element("div", "stat");
-  block.append(element("span", "stat-label", label), element("strong", "stat-value", value));
-  return block;
+function svgRestart() {
+  return svg("M12 5V1L7 6l5 5V7c3.3 0 6 2.7 6 6s-2.7 6-6 6-6-2.7-6-6H4c0 4.4 3.6 8 8 8s8-3.6 8-8-3.6-8-8-8z");
 }
 
-function previewText(row) {
-  if (row.preview == null) return "—";
-  return String(row.preview);
+function svg(pathData) {
+  const el = document.createElementNS("http://www.w3.org/2000/svg", "svg");
+  el.setAttribute("viewBox", "0 0 24 24");
+  el.setAttribute("aria-hidden", "true");
+  const path = document.createElementNS("http://www.w3.org/2000/svg", "path");
+  path.setAttribute("d", pathData);
+  path.setAttribute("fill", "currentColor");
+  el.append(path);
+  return el;
 }
 
 function button(label, className, onClick) {
