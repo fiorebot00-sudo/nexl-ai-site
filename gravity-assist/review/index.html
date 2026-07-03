@@ -155,9 +155,9 @@
   <section>
     <div class="eyebrow"><span class="num g">5</span><span class="lbl">Binary star &middot; background depth</span></div>
     <h2>A two-sun system, sitting far back</h2>
-    <p class="intent">A warm giant + white dwarf sharing a faint tidal bridge. <b>Stationary and softened</b> so it reads as deep background, never a focal point. <b>Crimson Shoals only.</b> (The third glow lower-right is a system planet, not a star &mdash; reads fine over a real reef.)</p>
+    <p class="intent">Two stars &mdash; a warm giant + a white dwarf &mdash; sharing a faint tidal bridge. <b>Stationary and softened</b> so it reads as deep background, never a focal point. <b>Crimson Shoals only.</b></p>
     <div class="grid-bin" id="bin-grid"></div>
-    <div class="rec"><div class="h">Your call, locked</div><p>Placed only in <b>Crimson Shoals</b> (warm giant + white dwarf), as a background <em>signature</em> on some systems in that biome. Stationary, alpha-capped, softened &mdash; it deepens the sky without ever competing with the planets you're reading. The 3-star read is fine (the third is a planet).</p></div>
+    <div class="rec"><div class="h">Your call, locked</div><p>Placed only in <b>Crimson Shoals</b> (warm giant + white dwarf), as a background <em>signature</em> on some systems in that biome. Stationary, alpha-capped, softened &mdash; it deepens the sky without ever competing with the planets you're reading.</p></div>
   </section>
 
   <!-- 6 &middot; AMBIENT TRAFFIC -->
@@ -327,9 +327,7 @@ function star(ctx,x,y,r,col){const c=col.length===7?col:'#ffffff';
  picks.forEach((p,i)=>{const tile=document.createElement('div');tile.className='tile';
    const cv=document.createElement('canvas');cv.height=170;tile.appendChild(cv);
    const cap=document.createElement('div');cap.className='cap';cap.innerHTML='<div class="n">'+p.t+'</div>';tile.appendChild(cap);grid.appendChild(tile);
-   reg(cv,(ctx,w,h,t)=>{bg(ctx,w,h,p.b.bg,p.mode==='wire');stars(ctx,w,h,i*29+5,40,lerpC('#cfe0ff',p.b.hue,.2));binary(ctx,w,h,t,p.mode,p.b.hue);
-     // a small planet + horizon for context
-     planet(ctx,w*0.7,h*0.82,Math.min(w,h)*0.09,lerpC('#888888',p.b.hue,.4),'#1a1a1f');},{h:170});
+   reg(cv,(ctx,w,h,t)=>{bg(ctx,w,h,p.b.bg,p.mode==='wire');stars(ctx,w,h,i*29+5,40,lerpC('#cfe0ff',p.b.hue,.2));binary(ctx,w,h,t,p.mode,p.b.hue);},{h:170});
  });})();
 
 // ============ 6 \u00B7 AMBIENT TRAFFIC ============
@@ -347,7 +345,10 @@ function amb(ctx,w,h,t,type,hue){const cx=w*0.5,cy=h*0.5;const dr=(t*0.3)%1;
    ctx.fillStyle='rgba(120,130,140,.35)';ctx.beginPath();ctx.arc(0,-6.5,4.3,0,7);ctx.fill();
    ctx.strokeStyle='#c2cad2';ctx.lineWidth=.8;ctx.beginPath();ctx.moveTo(0,-6.5);ctx.lineTo(0,-13.5);ctx.stroke();ctx.fillStyle='#eef3f8';ctx.fillRect(-1,-14.5,2,2);ctx.restore();}
  else if(type==='ufo'){ctx.save();ctx.translate(cx+Math.sin(t*2)*10,cy);ctx.fillStyle='rgba('+hx(hue)+',.8)';ctx.beginPath();ctx.ellipse(0,0,13,4.5,0,0,7);ctx.fill();ctx.fillStyle='#b5d9bd';ctx.beginPath();ctx.ellipse(0,-3,6,4,0,Math.PI,0);ctx.fill();ctx.fillStyle=hue;ctx.globalAlpha=.4;ctx.beginPath();ctx.moveTo(-9,3);ctx.lineTo(9,3);ctx.lineTo(5,14);ctx.lineTo(-5,14);ctx.closePath();ctx.fill();ctx.restore();}
- else if(type==='meteor'){ctx.lineCap='round';const L=[11,24,15,31,19,13],SP=[72,116,88,134,98,80];for(let k=0;k<6;k++){const len=L[k],off=((t*SP[k]+k*57)%(w+90))-45,y=10+k*12-16,dx=-len*0.9,dy=len*0.42;ctx.globalAlpha=.6;const g=ctx.createLinearGradient(off,y,off+dx,y+dy);g.addColorStop(0,'rgba(232,242,255,.9)');g.addColorStop(1,'rgba(210,228,255,0)');ctx.strokeStyle=g;ctx.lineWidth=1.4;ctx.beginPath();ctx.moveTo(off,y);ctx.lineTo(off+dx,y+dy);ctx.stroke();ctx.fillStyle='#eaf2ff';ctx.beginPath();ctx.arc(off,y,1.1,0,7);ctx.fill();}ctx.globalAlpha=1;}
+ else if(type==='meteor'){ctx.lineCap='round';const A=0.52,dxu=Math.cos(A),dyu=Math.sin(A);const L=[24,13,31,16,21,11],SP=[130,165,115,150,140,175],EX=[.1,.28,.46,.63,.8,.93];const span=(h+50)/dyu;
+   for(let k=0;k<6;k++){const len=L[k],s=((t*SP[k]+EX[k]*span*3)%span),ex=EX[k]*(w+80)-40,hx=ex+dxu*s,hy=-25+dyu*s,tx=hx-dxu*len,ty=hy-dyu*len;
+     ctx.globalAlpha=.62;const g=ctx.createLinearGradient(hx,hy,tx,ty);g.addColorStop(0,'rgba(232,242,255,.9)');g.addColorStop(1,'rgba(210,228,255,0)');ctx.strokeStyle=g;ctx.lineWidth=1.4;ctx.beginPath();ctx.moveTo(hx,hy);ctx.lineTo(tx,ty);ctx.stroke();
+     ctx.fillStyle='#eaf2ff';ctx.beginPath();ctx.arc(hx,hy,1.1,0,7);ctx.fill();}ctx.globalAlpha=1;}
  else if(type==='ringed'){ctx.save();ctx.translate(cx,cy);planet(ctx,0,0,10,lerpC('#c9a26a',hue,.3),'#3a2c18');ctx.strokeStyle='rgba('+hx(hue)+',.6)';ctx.lineWidth=2;ctx.beginPath();ctx.ellipse(0,0,20,6,-.4,0,7);ctx.stroke();ctx.restore();}
  else if(type==='aurora'){const g=ctx.createLinearGradient(0,cy-18,0,cy+18);g.addColorStop(0,'rgba('+hx(hue)+',0)');g.addColorStop(.5,'rgba('+hx(hue)+',.3)');g.addColorStop(1,'rgba('+hx(hue)+',0)');ctx.fillStyle=g;ctx.beginPath();for(let x=0;x<=w;x+=6){const y=cy+Math.sin(x*.05+t)*8;ctx[x?'lineTo':'moveTo'](x,y-9);}for(let x=w;x>=0;x-=6){const y=cy+Math.sin(x*.05+t)*8;ctx.lineTo(x,y+9);}ctx.closePath();ctx.fill();}
  else if(type==='sail'){ctx.save();ctx.translate(cx,cy);ctx.rotate(-.3);ctx.fillStyle='rgba('+hx(hue)+',.18)';ctx.strokeStyle='rgba('+hx(hue)+',.6)';ctx.lineWidth=1;ctx.beginPath();ctx.rect(-14,-14,28,28);ctx.fill();ctx.stroke();ctx.beginPath();ctx.moveTo(-14,0);ctx.lineTo(14,0);ctx.moveTo(0,-14);ctx.lineTo(0,14);ctx.stroke();ctx.fillStyle='#e8ecf0';ctx.fillRect(-2,14,4,8);ctx.restore();}
