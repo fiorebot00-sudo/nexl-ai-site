@@ -118,7 +118,7 @@
         <div class="leg"><div class="k">2 &middot; Hints</div><div class="v">Visual path nudge</div><span class="tag plan">Plan &rarr; chat</span></div>
         <div class="leg"><div class="k">3 &middot; Screen shake</div><div class="v">Crashes hit harder</div><span class="tag mock">Live below</span></div>
         <div class="leg"><div class="k">4 &middot; Satellites</div><div class="v">A form per biome</div><span class="tag mock">Gallery below</span></div>
-        <div class="leg"><div class="k">5 &middot; Binary star</div><div class="v">Deeper backdrops</div><span class="tag mock">3 biomes below</span></div>
+        <div class="leg"><div class="k">5 &middot; Binary star</div><div class="v">Deeper backdrops</div><span class="tag mock">2 biomes below</span></div>
         <div class="leg"><div class="k">6 &middot; Ambient traffic</div><div class="v">Busier skies</div><span class="tag mock">Gallery below</span></div>
       </div>
     </div>
@@ -128,9 +128,9 @@
   <section>
     <div class="eyebrow"><span class="num g">3</span><span class="lbl">Screen shake &middot; crash only</span></div>
     <h2>Make a planet impact you can feel</h2>
-    <p class="intent">The game already shakes on a crash &mdash; but at &plusmn;1.6px it's invisible. Same trigger, punchier response: a directional kick along the impact, then a decaying rattle. Crash the ship at each intensity and pick one.</p>
+    <p class="intent">The game already shakes on a crash &mdash; but at &plusmn;1.6px it's invisible, and the scoreboard doesn't move at all. This mock shakes the <b>entire frame, scoreboard included</b>: a directional kick along the impact, then a decaying rattle. Crash the ship at each intensity and pick one.</p>
     <div class="card"><div class="pad">
-      <canvas id="shake" height="300" aria-label="Screen-shake demo: a ship crashing into a planet"></canvas>
+      <canvas id="shake" height="320" aria-label="Screen-shake demo: a ship crashing into a planet, whole frame shakes"></canvas>
       <div class="controls">
         <button class="preset danger" data-preset="current">Current &middot; &plusmn;1.6px</button>
         <button class="preset danger" data-preset="recommended">Recommended</button>
@@ -139,7 +139,7 @@
       </div>
       <div class="readout" id="shake-read">Tap a button to fly the ship into the planet.</div>
     </div></div>
-    <div class="rec"><div class="h">Recommended</div><p>Peak <code>&plusmn;9px</code>, a <code>6px</code> directional kick along the impact vector, decaying over <code>0.42s</code> with a 60&nbsp;ms freeze on contact (hitstop). Crash-only &mdash; never on a wormhole miss or a lost-in-space timeout, so the shake stays a pure "you hit something" signal. Scales down on the smallest phones.</p></div>
+    <div class="rec"><div class="h">Recommended</div><p>Peak <code>&plusmn;9px</code>, a <code>6px</code> directional kick along the impact vector, decaying over <code>0.42s</code> with a 60&nbsp;ms freeze on contact (hitstop) &mdash; applied to the <b>whole screen including the HUD</b>. Crash-only &mdash; never on a wormhole miss or a lost-in-space timeout, so the shake stays a pure "you hit something" signal. Scales down on the smallest phones.</p></div>
   </section>
 
   <!-- 4 &middot; SATELLITES -->
@@ -148,16 +148,16 @@
     <h2>The same reward, dressed for each world</h2>
     <p class="intent">Today every satellite is the same blue-panel comms bird. The rule that makes this work: the <b>gold core stays gold everywhere</b> (reward color is role-locked), but the hull becomes native to the biome &mdash; so it always reads as "grab me," never repeats a silhouette.</p>
     <div class="grid-sat" id="sat-grid"></div>
-    <div class="rec"><div class="h">Recommended</div><p>Ship all eleven. The gold pickup core is constant (keeps the "+50" read instant); only the chassis changes. HOME keeps today's classic comms bird as the baseline so the first world feels familiar.</p></div>
+    <div class="rec"><div class="h">Your call, locked</div><p>All eleven approved. Per your note, <b>Crimson Shoals is now an inanimate sunken amphora</b> (was the living jelly). The gold pickup core stays constant across every form (keeps the "+50" read instant); only the chassis changes. HOME keeps today's classic comms bird as the baseline.</p></div>
   </section>
 
   <!-- 5 &middot; BINARY STAR -->
   <section>
     <div class="eyebrow"><span class="num g">5</span><span class="lbl">Binary star &middot; background depth</span></div>
-    <h2>A two-sun system, adapted per biome</h2>
-    <p class="intent">One backdrop concept &mdash; a primary star and a brighter companion orbiting a shared center, with a faint tidal bridge between them. It re-skins to each biome's render mode. Here it is in three very different ones. Like all ambient motion, it freezes the instant you fling.</p>
+    <h2>A two-sun system, sitting far back</h2>
+    <p class="intent">One backdrop concept &mdash; a primary star and a brighter companion sharing a faint tidal bridge. <b>Stationary and softened</b> so it reads as deep background, never a focal point. Placed in just two biomes: Violet Deep (classic) and Crimson Shoals (warm giant + white dwarf).</p>
     <div class="grid-bin" id="bin-grid"></div>
-    <div class="rec"><div class="h">Recommended</div><p>Add it as a rare background <em>signature</em> (not every system) to 2&ndash;3 biomes to start &mdash; Home for the classic look, Ember for the warm giant + white dwarf, Dead Space to prove it survives the blueprint mode. Alpha-capped and damped, so it deepens the sky without ever competing with the planets you're reading.</p></div>
+    <div class="rec"><div class="h">Your call, locked</div><p>Placed only in <b>Violet Deep</b> (classic) and <b>Crimson Shoals</b> (warm giant + white dwarf), as a background <em>signature</em> on some systems in those biomes. Stationary, alpha-capped, softened &mdash; it deepens the sky without ever competing with the planets you're reading.</p></div>
   </section>
 
   <!-- 6 &middot; AMBIENT TRAFFIC -->
@@ -174,7 +174,8 @@
   </section>
 
   <div class="foot">
-    <b>1 &middot; Lives</b> and <b>2 &middot; Hints</b> are written up in chat as options with a recommendation each &mdash; they're rules decisions, not visuals. Everything on this page is a mockup: nothing here is in the live build until you approve it. Tell me which shake preset, which satellite forms, which biomes get the binary star, and whether the frequency bump feels right.
+    <b>Locked in:</b> lives = start at 6, +1 per new biome, 8-ship cap (A+D). Hints = progressive visual guidance corridor after 2 fails. Satellites = all 11 (Crimson Shoals now the amphora). Binary star = Violet Deep + Crimson Shoals, stationary &amp; soft.<br><br>
+    <b>Still open:</b> which shake intensity (Recommended vs Heavy), and whether the ambient frequency bump feels right. Nothing is in the live game yet &mdash; I'll fold the approved set into one build.
   </div>
 </div>
 
@@ -192,7 +193,7 @@ const BIOMES=[
  {name:'EMERALD VERGE',bg:['#05130c','#0a1a10'],hue:'#7dffb0',form:'seedpod',d:'glowing seedpod'},
  {name:'GILDED DRIFT',bg:['#0d0906','#1a130a'],hue:'#e0b060',form:'astrolabe',d:'brass astrolabe'},
  {name:'THE RUST BELT',bg:['#140b07','#140b07'],hue:'#e0824a',form:'drone',d:'riveted iron drone'},
- {name:'CRIMSON SHOALS',bg:['#150609','#1a0a10'],hue:'#ff7d96',form:'jelly',d:'drifting jelly'},
+ {name:'CRIMSON SHOALS',bg:['#150609','#1a0a10'],hue:'#ff7d96',form:'amphora',d:'sunken amphora'},
  {name:'DEAD SPACE',bg:['#0d0d12','#0d0d12'],hue:'#aab4cd',form:'wire',d:'wireframe plot'},
  {name:'EMBER NEBULA',bg:['#0c0503','#180903'],hue:'#ff8a4a',form:'lantern',d:'forge lantern'},
  {name:'EVENT HORIZON',bg:['#070512','#070512'],hue:'#9f7dff',form:'prism',d:'light-bending prism'},
@@ -201,7 +202,7 @@ const BIOMES=[
 // ---- shared canvas registry ----
 const mods=[];
 function reg(cv,draw,opts){opts=opts||{};const dpr=Math.min(devicePixelRatio||1,2);
-  function size(){const w=cv.clientWidth;const h=opts.h||cv.height;cv.width=w*dpr;cv.height=h*dpr;cv._w=w;cv._h=h;}
+  function size(){const w=cv.clientWidth;const h=opts.h||300;cv.style.height=h+'px';cv.width=w*dpr;cv.height=h*dpr;cv._w=w;cv._h=h;}
   size();addEventListener('resize',size);const ctx=cv.getContext('2d');
   mods.push({cv,ctx,dpr,draw,st:opts.st||{}});}
 function loop(t){const s=t/1000;for(const m of mods){const{ctx,cv,dpr}=m;ctx.setTransform(dpr,0,0,dpr,0,0);ctx.clearRect(0,0,cv._w,cv._h);m.draw(ctx,cv._w,cv._h,s,m.st);}if(!RM)requestAnimationFrame(loop);}
@@ -221,6 +222,17 @@ const PRESETS={
   heavy:{mag:16,kick:10,dur:.5,hit:.09,label:'\u00B116px peak, 10px kick, 0.5s. Cinematic \u2014 maybe too much for a run-ender.'},
   none:{mag:0,kick:0,dur:0,hit:0,label:'shake off, for comparison.'},
 };
+function shakeHUD(ctx,w){ // mock scoreboard, drawn inside the shake so it rattles too
+ ctx.fillStyle='rgba(6,9,16,.66)';ctx.fillRect(0,0,w,44);
+ ctx.fillStyle='rgba(143,162,200,.18)';ctx.fillRect(0,44,w,2);
+ ctx.textAlign='left';ctx.fillStyle=C.muted;ctx.font='800 9px Oxanium';ctx.fillText('SCORE',14,14);
+ ctx.fillStyle=C.ink;ctx.font='800 22px Oxanium';ctx.fillText('8400',12,37);
+ ctx.textAlign='center';ctx.fillStyle=C.muted;ctx.font='800 9px Oxanium';ctx.fillText('SATS',w*0.5,14);
+ ctx.fillStyle=C.gold;ctx.fillRect(w*0.5-20,29,6,6);ctx.fillStyle=C.ink;ctx.font='800 20px Oxanium';ctx.textAlign='left';ctx.fillText('6',w*0.5-8,37);
+ ctx.textAlign='right';ctx.fillStyle=C.muted;ctx.font='800 9px Oxanium';ctx.fillText('SYS 4',w-14,14);
+ ctx.fillStyle=C.gold;ctx.font='800 20px Oxanium';ctx.fillText('BEST 9200',w-14,37);
+ ctx.textAlign='left';
+}
 (function(){const cv=document.getElementById('shake');if(!cv)return;
  const st={ph:'idle',t:0,px:0,py:0,vx:0,vy:0,parts:[],sh:0,shdur:.28,kx:0,ky:0,mag:0,freeze:0,name:''};
  const read=document.getElementById('shake-read');
@@ -242,9 +254,11 @@ const PRESETS={
    // shake offset
    let ox=0,oy=0;if(st.ph==='dead'&&st.shT<st.shdur){const p=st.shT/st.shdur,amp=st.mag*(1-p);ox=(Math.random()-.5)*2*amp+st.kx*Math.pow(1-p,2);oy=(Math.random()-.5)*2*amp+st.ky*Math.pow(1-p,2);}
    ctx.save();ctx.translate(ox,oy);
+   // oversized void backdrop so a shaking frame never exposes a page-colored seam
+   ctx.fillStyle=C.void;ctx.fillRect(-28,-28,w+56,h+56);
    bg(ctx,w,h,['#0a1120','#05070d']);stars(ctx,w,h,7,70);
    // gravity rings + planet
-   const tx=w*0.5,ty=h*0.42+34,pr=Math.min(w,h)*0.11;
+   const tx=w*0.5,ty=h*0.46+30,pr=Math.min(w,h)*0.11;
    ctx.strokeStyle='rgba(159,180,255,.12)';ctx.lineWidth=1;for(let k=1;k<=3;k++){ctx.beginPath();ctx.arc(tx,ty,pr+k*16,0,7);ctx.stroke();}
    planet(ctx,tx,ty,pr,'#e08a6a','#5a2418');
    // pad
@@ -252,9 +266,11 @@ const PRESETS={
    // ship / trail / particles
    if(st.ph==='fly'){ctx.strokeStyle='rgba(126,240,255,.5)';ctx.lineWidth=2;ctx.beginPath();ctx.moveTo(w*0.5,h-40);ctx.lineTo(st.px,st.py);ctx.stroke();ship(ctx,st.px,st.py,Math.atan2(st.vy,st.vx)+Math.PI/2);}
    if(st.ph==='dead'){for(const pt of st.parts){ctx.globalAlpha=Math.max(0,pt.life/.55);ctx.fillStyle=C.danger;ctx.fillRect(pt.x-1.5,pt.y-1.5,3,3);}ctx.globalAlpha=1;}
-   if(st.ph==='idle'){ship(ctx,w*0.5,h-40,0);ctx.fillStyle=C.muted;ctx.font='700 13px Oxanium';ctx.textAlign='center';ctx.fillText('\u25B2 crash into the planet',w*0.5,h-10);}
+   if(st.ph==='idle'){ship(ctx,w*0.5,h-40,0);ctx.fillStyle=C.muted;ctx.font='700 13px Oxanium';ctx.textAlign='center';ctx.fillText('\u25B2 crash into the planet',w*0.5,h-12);}
+   // HUD strip drawn INSIDE the shake \u2014 the scoreboard rattles with everything else
+   shakeHUD(ctx,w);
    ctx.restore();
- },{h:300});
+ },{h:320});
 })();
 
 // ============ 4 \u00B7 SATELLITE FORMS ============
@@ -267,7 +283,13 @@ function satForm(ctx,form,t,hue){ctx.rotate(t*0.5);
  else if(form==='seedpod'){for(const s of[-1,1]){ctx.save();ctx.scale(s,1);ctx.fillStyle=lerpC('#0a1a10',H,.5);ctx.beginPath();ctx.ellipse(9,0,10,5,-.5,0,7);ctx.fill();ctx.strokeStyle=H;ctx.lineWidth=.8;ctx.globalAlpha=.7;ctx.stroke();ctx.globalAlpha=1;ctx.restore();}ctx.fillStyle=H;for(let k=0;k<4;k++){ctx.globalAlpha=.4+.4*Math.sin(t*3+k);ctx.beginPath();ctx.arc(Math.cos(k*1.6)*17,Math.sin(k*1.6)*13,1.3,0,7);ctx.fill();}ctx.globalAlpha=1;goldCore(ctx,t,1.1);}
  else if(form==='astrolabe'){ctx.strokeStyle=H;ctx.lineWidth=2;ctx.beginPath();ctx.ellipse(0,0,15,15,0,0,7);ctx.stroke();ctx.lineWidth=1;ctx.globalAlpha=.7;ctx.beginPath();ctx.ellipse(0,0,15,6,0,0,7);ctx.moveTo(-15,0);ctx.lineTo(15,0);ctx.moveTo(0,-15);ctx.lineTo(0,15);ctx.stroke();ctx.globalAlpha=1;goldCore(ctx,t,1.2);}
  else if(form==='drone'){ctx.fillStyle=lerpC('#1a0f08',H,.25);ctx.strokeStyle=lerpC('#000000',H,.5);ctx.lineWidth=1.4;ctx.beginPath();for(let k=0;k<6;k++){const a=k*1.047;ctx[k?'lineTo':'moveTo'](Math.cos(a)*13,Math.sin(a)*13);}ctx.closePath();ctx.fill();ctx.stroke();ctx.fillStyle=H;for(let k=0;k<6;k++){const a=k*1.047;ctx.globalAlpha=.7;ctx.beginPath();ctx.arc(Math.cos(a)*10,Math.sin(a)*10,1.1,0,7);ctx.fill();}ctx.globalAlpha=1;goldCore(ctx,t,1);}
- else if(form==='jelly'){ctx.globalAlpha=.45;ctx.fillStyle=H;ctx.beginPath();ctx.arc(0,-2,13,Math.PI,0);ctx.lineTo(11,-2);ctx.quadraticCurveTo(0,4,-11,-2);ctx.closePath();ctx.fill();ctx.globalAlpha=1;ctx.strokeStyle=H;ctx.lineWidth=1.2;for(let k=-2;k<=2;k++){ctx.beginPath();ctx.moveTo(k*5,0);ctx.quadraticCurveTo(k*5+Math.sin(t*3+k)*4,14,k*5+Math.sin(t*2+k)*3,26);ctx.stroke();}goldCore(ctx,t,1);}
+ else if(form==='amphora'){const base=lerpC('#1a0808',H,.34),edge=lerpC('#000000',H,.55);
+   ctx.fillStyle=base;ctx.strokeStyle=edge;ctx.lineWidth=1.3;
+   ctx.beginPath();ctx.moveTo(0,-12);ctx.quadraticCurveTo(11,-5,9,5);ctx.quadraticCurveTo(6,14,0,17);ctx.quadraticCurveTo(-6,14,-9,5);ctx.quadraticCurveTo(-11,-5,0,-12);ctx.closePath();ctx.fill();ctx.stroke();
+   ctx.fillStyle=base;ctx.fillRect(-3.5,-16,7,6);ctx.strokeRect(-3.5,-16,7,6);
+   ctx.lineWidth=1.7;ctx.beginPath();ctx.arc(-8,-9,4.2,-1,1.7);ctx.stroke();ctx.beginPath();ctx.arc(8,-9,4.2,1.4,4.1);ctx.stroke();
+   ctx.fillStyle=H;ctx.globalAlpha=.5;for(let k=0;k<3;k++){ctx.beginPath();ctx.arc(-5+k*5,9,1.5,0,7);ctx.fill();}ctx.globalAlpha=1;
+   goldCore(ctx,t,1);}
  else if(form==='wire'){ctx.strokeStyle='rgba(180,190,215,.7)';ctx.lineWidth=1.2;ctx.beginPath();ctx.arc(0,0,14,0,7);ctx.stroke();ctx.beginPath();ctx.ellipse(0,0,5,14,0,0,7);ctx.moveTo(-14,0);ctx.lineTo(14,0);ctx.stroke();ctx.strokeRect(-18,-3,8,6);ctx.strokeRect(10,-3,8,6);goldCore(ctx,t,1);}
  else if(form==='lantern'){ctx.fillStyle='#160a06';ctx.beginPath();ctx.moveTo(-9,-12);ctx.lineTo(9,-12);ctx.lineTo(11,10);ctx.lineTo(-11,10);ctx.closePath();ctx.fill();const g=ctx.createLinearGradient(0,10,0,-6);g.addColorStop(0,'rgba(255,120,40,.7)');g.addColorStop(1,'rgba(255,120,40,0)');ctx.fillStyle=g;ctx.fillRect(-11,-6,22,16);ctx.fillStyle=H;for(let k=0;k<4;k++){ctx.globalAlpha=.5+.4*Math.sin(t*4+k);ctx.beginPath();ctx.arc((k-1.5)*5,10-((t*10+k*3)%18),1,0,7);ctx.fill();}ctx.globalAlpha=1;goldCore(ctx,t,1.1);}
  else if(form==='prism'){ctx.fillStyle='#0a0714';ctx.beginPath();ctx.arc(0,0,13,0,7);ctx.fill();ctx.strokeStyle=H;ctx.lineWidth=1.8;ctx.beginPath();ctx.arc(0,0,13,-1.2,1.2);ctx.stroke();ctx.globalAlpha=.4;ctx.lineWidth=1;for(let k=0;k<2;k++){ctx.beginPath();ctx.arc(0,0,18+k*5,-.9,.9);ctx.stroke();}ctx.globalAlpha=1;goldCore(ctx,t,1.1);}
@@ -281,7 +303,7 @@ function satForm(ctx,form,t,hue){ctx.rotate(t*0.5);
  });})();
 
 // ============ 5 \u00B7 BINARY STAR ============
-function binary(ctx,w,h,t,mode,hue){const cx=w*0.5,cy=h*0.42,a=t*0.35,R=Math.min(w,h)*0.2;
+function binary(ctx,w,h,t,mode,hue){const cx=w*0.5,cy=h*0.40,a=0.7,R=Math.min(w,h)*0.22;/* a fixed = stationary */
  const p1x=cx+Math.cos(a)*R*0.42,p1y=cy+Math.sin(a)*R*0.42*0.55;
  const p2x=cx-Math.cos(a)*R*1.0,p2y=cy-Math.sin(a)*R*1.0*0.55;
  const r1=Math.min(w,h)*0.075,r2=Math.min(w,h)*0.04;
@@ -290,15 +312,18 @@ function binary(ctx,w,h,t,mode,hue){const cx=w*0.5,cy=h*0.42,a=t*0.35,R=Math.min
    ctx.strokeStyle=hue;ctx.lineWidth=1.4;ctx.beginPath();ctx.arc(p1x,p1y,r1,0,7);ctx.stroke();ctx.beginPath();ctx.arc(p2x,p2y,r2,0,7);ctx.stroke();
    ctx.strokeStyle='rgba(159,180,255,.4)';ctx.beginPath();ctx.moveTo(cx-4,cy);ctx.lineTo(cx+4,cy);ctx.moveTo(cx,cy-4);ctx.lineTo(cx,cy+4);ctx.stroke();return;}
  // glow bridge
- const bg2=ctx.createLinearGradient(p1x,p1y,p2x,p2y);bg2.addColorStop(0,'rgba('+hx(hue)+',.10)');bg2.addColorStop(.5,'rgba('+hx(hue)+',.02)');bg2.addColorStop(1,'rgba(255,255,255,.08)');
- ctx.strokeStyle=bg2;ctx.lineWidth=r2*1.4;ctx.lineCap='round';ctx.beginPath();ctx.moveTo(p1x,p1y);ctx.lineTo(p2x,p2y);ctx.stroke();
+ const bg2=ctx.createLinearGradient(p1x,p1y,p2x,p2y);bg2.addColorStop(0,'rgba('+hx(hue)+',.05)');bg2.addColorStop(.5,'rgba('+hx(hue)+',.012)');bg2.addColorStop(1,'rgba(255,255,255,.04)');
+ ctx.strokeStyle=bg2;ctx.lineWidth=r2*1.1;ctx.lineCap='round';ctx.beginPath();ctx.moveTo(p1x,p1y);ctx.lineTo(p2x,p2y);ctx.stroke();
  star(ctx,p1x,p1y,r1,mode==='ember'?'#ff9a4a':hue);
  star(ctx,p2x,p2y,r2,'#ffffff');
 }
 function hx(h){return[parseInt(h.slice(1,3),16),parseInt(h.slice(3,5),16),parseInt(h.slice(5,7),16)].join(',')}
-function star(ctx,x,y,r,col){const g=ctx.createRadialGradient(x,y,0,x,y,r*3.4);g.addColorStop(0,col);g.addColorStop(.25,'rgba('+hx(col.length===7?col:'#ffffff')+',.5)');g.addColorStop(1,'rgba('+hx(col.length===7?col:'#ffffff')+',0)');ctx.fillStyle=g;ctx.beginPath();ctx.arc(x,y,r*3.4,0,7);ctx.fill();ctx.fillStyle='#fff';ctx.beginPath();ctx.arc(x,y,r*.6,0,7);ctx.fill();}
+function star(ctx,x,y,r,col){const c=col.length===7?col:'#ffffff';
+ // soft diffuse halo \u2014 no hard white dot, so it sits back as background
+ const g=ctx.createRadialGradient(x,y,0,x,y,r*4.4);g.addColorStop(0,'rgba('+hx(c)+',.5)');g.addColorStop(.28,'rgba('+hx(c)+',.15)');g.addColorStop(1,'rgba('+hx(c)+',0)');ctx.fillStyle=g;ctx.beginPath();ctx.arc(x,y,r*4.4,0,7);ctx.fill();
+ const g2=ctx.createRadialGradient(x,y,0,x,y,r);g2.addColorStop(0,'rgba(255,255,255,.55)');g2.addColorStop(1,'rgba('+hx(c)+',0)');ctx.fillStyle=g2;ctx.beginPath();ctx.arc(x,y,r,0,7);ctx.fill();}
 (function(){const grid=document.getElementById('bin-grid');if(!grid)return;
- const picks=[{b:BIOMES[0],mode:'classic',t:'Home Stretch \u2014 classic'},{b:BIOMES[9],mode:'ember',t:'Ember Nebula \u2014 warm giant + dwarf'},{b:BIOMES[8],mode:'wire',t:'Dead Space \u2014 blueprint plot'}];
+ const picks=[{b:BIOMES[2],mode:'classic',t:'Violet Deep \u2014 classic'},{b:BIOMES[7],mode:'ember',t:'Crimson Shoals \u2014 warm giant + dwarf'}];
  picks.forEach((p,i)=>{const tile=document.createElement('div');tile.className='tile';
    const cv=document.createElement('canvas');cv.height=170;tile.appendChild(cv);
    const cap=document.createElement('div');cap.className='cap';cap.innerHTML='<div class="n">'+p.t+'</div>';tile.appendChild(cap);grid.appendChild(tile);
