@@ -195,22 +195,64 @@ const galaxyFor = depth => Math.floor((depth - 1) / 33) + 1;
 // per galaxy lap; galaxy names cycle/extend as depth grows. Readout = galaxy · system.
 const GALAXY_NAMES = ['Home Reach', 'The Corvid Sprawl', 'Vela Expanse', 'Ashen Marches', 'Erebus Deep', 'The Pale Beyond'];
 const galaxyName = depth => GALAXY_NAMES[(galaxyFor(depth) - 1) % GALAXY_NAMES.length];
-const SYSTEM_NAMES = [
-  ['Cape Serene', 'Harbor Light', 'The Last Buoy'],       // HOME STRETCH
-  ['Tidewatch', 'Coral Gate', 'The Sunken Mile'],         // THE SHALLOWS
-  ['Nocturne', 'Inkfall', 'The Quiet Fathoms'],           // VIOLET DEEP
-  ['Frostgate', 'Rime Hollow', 'Glass Reach'],            // THE ICE SHELF
-  ['Verdant Rest', 'Spore Hollow', 'Green Threshold'],    // EMERALD VERGE
-  ['Amber Crossing', 'Dunefall', 'The Gilded Mile'],      // GILDED DRIFT
-  ['Slagworks', 'Derrick Field', 'The Iron Wake'],        // THE RUST BELT
-  ['Emberreef', 'The Warning', 'Bloodtide'],              // CRIMSON SHOALS
-  ['Null Station', 'The Blank', 'Silence'],               // DEAD SPACE
-  ['Forgefall', 'Cinder Gate', 'The Long Burn'],          // EMBER NEBULA
-  ['Last Light', 'The Brink', 'Threshold'],               // EVENT HORIZON
+// Each galaxy has its OWN 33 system names (D-adr-034) so no name repeats within a
+// game: 6 galaxies x 33 = 198 unique systems, far beyond any single run. Biome order
+// per galaxy: Home Stretch, Shallows, Violet Deep, Ice Shelf, Emerald Verge, Gilded
+// Drift, Rust Belt, Crimson Shoals, Dead Space, Ember Nebula, Event Horizon.
+const GALAXY_SYSTEMS = [
+  [ // G1 Home Reach — nautical / homely
+    ['Cape Serene','Harbor Light','The Last Buoy'],['Tidewatch','Coral Gate','The Sunken Mile'],
+    ['Nocturne','Inkfall','The Quiet Fathoms'],['Frostgate','Rime Hollow','Glass Reach'],
+    ['Verdant Rest','Spore Hollow','Green Threshold'],['Amber Crossing','Dunefall','The Gilded Mile'],
+    ['Slagworks','Derrick Field','The Iron Wake'],['Emberreef','The Warning','Bloodtide'],
+    ['Null Station','The Blank','Silence'],['Forgefall','Cinder Gate','The Long Burn'],
+    ['Last Light','The Brink','Threshold'],
+  ],
+  [ // G2 The Corvid Sprawl — birds / flight / black
+    ['Rookery','Magpie Landing','Starling Cross'],['Heron Shallows','Kingfisher Bend','The Wading Mile'],
+    ['Raven Deep','Nightjar','Featherfall'],['Snowgoose','Ptarmigan','Frostwing'],
+    ['Green Aviary','Warbler Hollow','Nestwood'],['Kestrel Dunes','Goldfinch Drift','Sandpiper Mile'],
+    ['Crowbar Yards','Grackle Works','Rusthollow'],['Cardinal Reef','Redwing','The Shrike'],
+    ['Empty Rookery','The Moult','Carrion'],['Phoenix Down','Emberwing','Ashrook'],
+    ['Nightwing','The Vanishing','Corvus End'],
+  ],
+  [ // G3 Vela Expanse — sailing / navigation
+    ['Fair Winds','The Mooring','Cape Vela'],['Keelwater','Sextant Bay','The Reaching'],
+    ['Doldrums','Starless Run','The Trough'],['Iceberg Lee','Frost Rigging','Cold Latitudes'],
+    ['Landfall','The Green Anchor','Kelphaven'],['Trade Winds','Golden Latitude','Sirocco'],
+    ['Shipbreak','The Careen','Barnacle Yards'],['Red Sky Morning','The Squall','Coralburn'],
+    ['Becalmed','The Void Passage','Dead Reckoning'],['Firewatch','The Kiln','Emberwake'],
+    ["World's Edge",'The Overfall','Last Bearing'],
+  ],
+  [ // G4 Ashen Marches — fire / ash / frontier
+    ["Warden's Rest",'Beacon Hill','The Last Post'],['Ashwater','Emberford','The Sodden Line'],
+    ['Cinderdeep','The Smother','Nightsoot'],['Frostember','Ashen Shelf','The Cold Cinder'],
+    ['Greenfire','Char Hollow','The Regrowth'],['Scorched Mile','Emberdrift','The Gilded Ash'],
+    ['The Forgeyard','Slagmarch','Ironburn'],['The Pyre','Bloodember','Warning Fires'],
+    ['Cold Ashes','The Cinder Void','Burnt Silence'],['The Great Forge','Ashfall','Everburn'],
+    ['Emberbrink','The Last Spark','Ashthreshold'],
+  ],
+  [ // G5 Erebus Deep — underworld / dark / Greek
+    ["Charon's Rest",'Lethe Bank','The Dim Shore'],['Styx Shallows','Acheron Bend','The Drowning Mile'],
+    ['Erebus Proper','The Abyss','Nyx Fathoms'],['Cocytus','Frozen Lament','Tartarus Ice'],
+    ['Asphodel','The Grey Meadow',"Persephone's Rest"],['Elysian Sands','The Golden Shade','Hypnos Drift'],
+    ['Hephaestus Yards','The Dross','Ironshade'],['Phlegethon','The Red Descent','Emberstyx'],
+    ['The Void of Erebus','Thanatos','Utter Silence'],['The Underforge','Cinder of Hades','Everdark'],
+    ['The Final Shade','Oblivion','Erebus End'],
+  ],
+  [ // G6 The Pale Beyond — ghostly / final / light
+    ['Palecape','First Ghostlight','The Wan Shore'],['Palewater','Mistbend','The Fading Mile'],
+    ['The Pale Deep','Wraithfall','Dimfathom'],['Hoarfrost','Palerime','The White Silence'],
+    ['Ghostgreen','Palespore','The Last Meadow'],['Palegold','Wraithdrift','The Bleached Mile'],
+    ['Paleiron','The Rusted Ghost','Wanwork'],['Palereef','The Faint Warning','Ghosttide'],
+    ['The Pale Void','Utter Blank','The Blank Pale'],['Paleflame','The Cold Forge','Wraithember'],
+    ['The Pale Threshold',"Journey's End",'The Beyond'],
+  ],
 ];
 function sysName(depth) {
   const within = (depth - 1) % 33;
-  return { galaxy: galaxyName(depth), system: SYSTEM_NAMES[Math.floor(within / 3)][within % 3] };
+  const gi = (galaxyFor(depth) - 1) % GALAXY_SYSTEMS.length;
+  return { galaxy: galaxyName(depth), system: GALAXY_SYSTEMS[gi][Math.floor(within / 3)][within % 3] };
 }
 
 // One tip per system, seeded so it's stable across retries of that system.
@@ -399,7 +441,7 @@ function straightShotWins(layout) {
 // ---------- system generation: gravity-forward from system 1, fast ramp ----------
 function difficulty(depth) {
   return {
-    nPlanets: Math.min(1 + Math.floor((depth + 1) / 2), 2),      // capped at 2 (D-adr-033, Mike)
+    nPlanets: Math.min(1 + Math.floor((depth + 1) / 2), 4),      // 1,2,2,3,3,4...
     gscale: Math.min(0.9 + 0.12 * (depth - 1), 1.7),
     gateR: Math.max(26, 54 - 2.2 * (depth - 1)),
   };
@@ -545,7 +587,7 @@ function genSystem(depth, runSeed) {
             const orb = { pi, orbR, a0: rng() * Math.PI * 2, om: (tier + rng() * 0.25) * (rng() < 0.5 ? -1 : 1) };
             if (depth >= 3 && roll < 0.30 && moonCount < 2) {
               layout.moons.push({ ...orb, r: oR }); moonCount++;
-            } else if (roll < 0.65 && layout.sats.length < 1) {   // one satellite per system (D-adr-033)
+            } else if (roll < 0.65 && layout.sats.length < 2) {   // at most 2 planets carry a satellite (D-adr-033, one per planet by loop)
               layout.sats.push({ ...orb, r: 4, got: false });
             }
           }
@@ -3228,7 +3270,7 @@ requestAnimationFrame(frame);
 // ---------- debug hooks (used by automated tests; harmless in play) ----------
 window.GG = {
   game, simulate, solve, genSystem, difficulty, previewT, straightShotWins,
-  SCORE, PT, escapeGate, endRun, loadSystem,
+  SCORE, PT, escapeGate, endRun, loadSystem, sysName, galaxyName,
   fling: (vx, vy) => fling(vx, vy),
   flingSolution: () => { const s = game.sys.sol; fling(s.vx, s.vy); return s; },
   newRun,

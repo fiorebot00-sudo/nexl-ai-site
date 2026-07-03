@@ -45,7 +45,7 @@
     <div class="strip"><span class="dot"></span><b>Gravity Assist &middot; Naming</b><span id="count"></span></div>
     <div class="body">
       <h1>Every place has a name</h1>
-      <p class="lede">One galaxy = a 33-system lap through the 11 biomes (3 systems each). The scoreboard's top-right now reads the <b>galaxy name</b>, then the <b>system name</b>. The 33 system names below recur each galaxy, made unique by the galaxy that contains them.</p>
+      <p class="lede">One galaxy = a 33-system lap through the 11 biomes (3 systems each). The scoreboard's top-right reads the <b>galaxy name</b>, then the <b>system name</b>. <b>Every galaxy has its own 33 names</b> &mdash; 198 unique systems in all, so <b>no name ever repeats in a game</b> (names only recycle at galaxy 7, depth 199, which no single run reaches).</p>
       <div class="readout"><span class="lbl">Reads as</span><div><div class="g" id="ro-g"></div><div class="s" id="ro-s"></div></div></div>
     </div>
   </div>
@@ -53,46 +53,52 @@
   <section>
     <div class="eyebrow">The galaxies &mdash; the lap you're on</div>
     <div class="gal-grid" id="galgrid"></div>
-    <p style="color:var(--muted);font-size:13px;margin-top:12px">Galaxy 7+ recycles this list of names (Home Reach again, etc.) &mdash; endless play, familiar regions. Easy to extend the list anytime.</p>
+    <p style="color:var(--muted);font-size:13px;margin-top:12px">Each galaxy carries its own theme (birds, sailing, ash, the underworld, the pale edge) so its 33 systems feel like one region. Galaxy 7+ recycles the six lists &mdash; endless play, no in-run repeats.</p>
   </section>
 
   <section>
-    <div class="eyebrow">The 33 systems &mdash; named by biome (3 each)</div>
-    <div id="biomes"></div>
+    <div class="eyebrow">The 198 systems &mdash; 33 per galaxy, unique across the game</div>
+    <div id="galsys"></div>
   </section>
 
-  <div class="rec"><div class="h">For your review</div><p>These are live in the game now (scoreboard + biome splash). Tell me which names to change, whether the galaxy list order/flavor works, and whether you'd rather each galaxy have its <em>own</em> 33 system names (more work, more distinct) instead of reusing this set with a galaxy prefix.</p></div>
+  <div class="rec"><div class="h">For your review</div><p>All 198 are live in the game now. No system name repeats within a game. Tell me any names to swap, or if a whole galaxy's theme should change.</p></div>
 </div>
 <script>
 const GAL=[
- {n:'Home Reach',d:'the solar backyard \u2014 where every run begins'},
- {n:'The Corvid Sprawl',d:'scattered, restless, half-charted'},
- {n:'Vela Expanse',d:'open and bright, a long clear run'},
- {n:'Ashen Marches',d:'burnt frontier, warm and worn'},
- {n:'Erebus Deep',d:'the dark middle, far from any light'},
- {n:'The Pale Beyond',d:'the last edge before the unknown'},
+ {n:'Home Reach',d:'the solar backyard \u2014 nautical, homely'},
+ {n:'The Corvid Sprawl',d:'restless and black \u2014 birds and flight'},
+ {n:'Vela Expanse',d:'open and bright \u2014 sailing and navigation'},
+ {n:'Ashen Marches',d:'burnt frontier \u2014 fire and ash'},
+ {n:'Erebus Deep',d:'the dark middle \u2014 the underworld'},
+ {n:'The Pale Beyond',d:'the last edge \u2014 ghostly, final'},
 ];
-const BIOMES=[
- {n:'HOME STRETCH',c:'#7ea6ff',m:'the backyard of the solar system',s:['Cape Serene','Harbor Light','The Last Buoy']},
- {n:'THE SHALLOWS',c:'#5fe0d6',m:'first hint of elsewhere',s:['Tidewatch','Coral Gate','The Sunken Mile']},
- {n:'VIOLET DEEP',c:'#b98cff',m:'far from home now',s:['Nocturne','Inkfall','The Quiet Fathoms']},
- {n:'THE ICE SHELF',c:'#bfe4f2',m:'crystalline, quiet, brittle',s:['Frostgate','Rime Hollow','Glass Reach']},
- {n:'EMERALD VERGE',c:'#7dffb0',m:'the last friendly place',s:['Verdant Rest','Spore Hollow','Green Threshold']},
- {n:'GILDED DRIFT',c:'#e0b060',m:'amber dust \u2014 the warm turn',s:['Amber Crossing','Dunefall','The Gilded Mile']},
- {n:'THE RUST BELT',c:'#e0824a',m:'dead mining country',s:['Slagworks','Derrick Field','The Iron Wake']},
- {n:'CRIMSON SHOALS',c:'#ff7d96',m:'everything warning-colored',s:['Emberreef','The Warning','Bloodtide']},
- {n:'DEAD SPACE',c:'#aab4cd',m:'nothing lives here',s:['Null Station','The Blank','Silence']},
- {n:'EMBER NEBULA',c:'#ff8a4a',m:'smoke over coals',s:['Forgefall','Cinder Gate','The Long Burn']},
- {n:'EVENT HORIZON',c:'#9f7dff',m:'the edge of everything',s:['Last Light','The Brink','Threshold']},
+const BM=[
+ ['HOME STRETCH','#7ea6ff'],['THE SHALLOWS','#5fe0d6'],['VIOLET DEEP','#b98cff'],['THE ICE SHELF','#bfe4f2'],
+ ['EMERALD VERGE','#7dffb0'],['GILDED DRIFT','#e0b060'],['THE RUST BELT','#e0824a'],['CRIMSON SHOALS','#ff7d96'],
+ ['DEAD SPACE','#aab4cd'],['EMBER NEBULA','#ff8a4a'],['EVENT HORIZON','#9f7dff'],
 ];
-document.getElementById('count').textContent = GAL.length+' galaxies \u00B7 33 systems each';
+const GS=[
+ [['Cape Serene','Harbor Light','The Last Buoy'],['Tidewatch','Coral Gate','The Sunken Mile'],['Nocturne','Inkfall','The Quiet Fathoms'],['Frostgate','Rime Hollow','Glass Reach'],['Verdant Rest','Spore Hollow','Green Threshold'],['Amber Crossing','Dunefall','The Gilded Mile'],['Slagworks','Derrick Field','The Iron Wake'],['Emberreef','The Warning','Bloodtide'],['Null Station','The Blank','Silence'],['Forgefall','Cinder Gate','The Long Burn'],['Last Light','The Brink','Threshold']],
+ [['Rookery','Magpie Landing','Starling Cross'],['Heron Shallows','Kingfisher Bend','The Wading Mile'],['Raven Deep','Nightjar','Featherfall'],['Snowgoose','Ptarmigan','Frostwing'],['Green Aviary','Warbler Hollow','Nestwood'],['Kestrel Dunes','Goldfinch Drift','Sandpiper Mile'],['Crowbar Yards','Grackle Works','Rusthollow'],['Cardinal Reef','Redwing','The Shrike'],['Empty Rookery','The Moult','Carrion'],['Phoenix Down','Emberwing','Ashrook'],['Nightwing','The Vanishing','Corvus End']],
+ [['Fair Winds','The Mooring','Cape Vela'],['Keelwater','Sextant Bay','The Reaching'],['Doldrums','Starless Run','The Trough'],['Iceberg Lee','Frost Rigging','Cold Latitudes'],['Landfall','The Green Anchor','Kelphaven'],['Trade Winds','Golden Latitude','Sirocco'],['Shipbreak','The Careen','Barnacle Yards'],['Red Sky Morning','The Squall','Coralburn'],['Becalmed','The Void Passage','Dead Reckoning'],['Firewatch','The Kiln','Emberwake'],["World's Edge",'The Overfall','Last Bearing']],
+ [["Warden's Rest",'Beacon Hill','The Last Post'],['Ashwater','Emberford','The Sodden Line'],['Cinderdeep','The Smother','Nightsoot'],['Frostember','Ashen Shelf','The Cold Cinder'],['Greenfire','Char Hollow','The Regrowth'],['Scorched Mile','Emberdrift','The Gilded Ash'],['The Forgeyard','Slagmarch','Ironburn'],['The Pyre','Bloodember','Warning Fires'],['Cold Ashes','The Cinder Void','Burnt Silence'],['The Great Forge','Ashfall','Everburn'],['Emberbrink','The Last Spark','Ashthreshold']],
+ [["Charon's Rest",'Lethe Bank','The Dim Shore'],['Styx Shallows','Acheron Bend','The Drowning Mile'],['Erebus Proper','The Abyss','Nyx Fathoms'],['Cocytus','Frozen Lament','Tartarus Ice'],['Asphodel','The Grey Meadow',"Persephone's Rest"],['Elysian Sands','The Golden Shade','Hypnos Drift'],['Hephaestus Yards','The Dross','Ironshade'],['Phlegethon','The Red Descent','Emberstyx'],['The Void of Erebus','Thanatos','Utter Silence'],['The Underforge','Cinder of Hades','Everdark'],['The Final Shade','Oblivion','Erebus End']],
+ [['Palecape','First Ghostlight','The Wan Shore'],['Palewater','Mistbend','The Fading Mile'],['The Pale Deep','Wraithfall','Dimfathom'],['Hoarfrost','Palerime','The White Silence'],['Ghostgreen','Palespore','The Last Meadow'],['Palegold','Wraithdrift','The Bleached Mile'],['Paleiron','The Rusted Ghost','Wanwork'],['Palereef','The Faint Warning','Ghosttide'],['The Pale Void','Utter Blank','The Blank Pale'],['Paleflame','The Cold Forge','Wraithember'],['The Pale Threshold',"Journey's End",'The Beyond']],
+];
+document.getElementById('count').textContent='6 galaxies \u00B7 198 systems';
 document.getElementById('ro-g').textContent='VELA EXPANSE';
-document.getElementById('ro-s').innerHTML='<span class="arrow">\u00B7</span> CORAL GATE';
+document.getElementById('ro-s').innerHTML='<span class="arrow">\u00B7</span> KELPHAVEN';
 const gg=document.getElementById('galgrid');
 GAL.forEach((g,i)=>{const d=document.createElement('div');d.className='gal';d.innerHTML='<div class="g">Galaxy '+(i+1)+'</div><div class="n">'+g.n+'</div><div class="d">'+g.d+'</div>';gg.appendChild(d);});
-const bb=document.getElementById('biomes');
-BIOMES.forEach((b,i)=>{const el=document.createElement('div');el.className='biome';
- let rows='<div class="head"><span class="sw" style="background:'+b.c+'"></span><span class="bn">'+b.n+'</span><span class="bm">'+b.m+'</span></div>';
- rows+='<div class="sysrow"><span class="idx">'+(i*3+1)+'-'+(i*3+3)+'</span>'+b.s.map((s,k)=>'<span class="sys"><small>System '+(k+1)+'</small>'+s+'</span>').join('')+'</div>';
- el.innerHTML=rows;bb.appendChild(el);});
+const wrap=document.getElementById('galsys');
+GS.forEach((g,gi)=>{
+ const head=document.createElement('div');
+ head.style.cssText='margin:22px 0 10px;display:flex;align-items:baseline;gap:10px';
+ head.innerHTML='<span style="font-size:11px;font-weight:800;letter-spacing:.14em;color:var(--muted)">GALAXY '+(gi+1)+'</span><span style="font-size:18px;font-weight:800;color:var(--gold)">'+GAL[gi].n+'</span>';
+ wrap.appendChild(head);
+ g.forEach((sys,bi)=>{const el=document.createElement('div');el.className='biome';
+  el.innerHTML='<div class="head"><span class="sw" style="background:'+BM[bi][1]+'"></span><span class="bn">'+BM[bi][0]+'</span></div>'+
+   '<div class="sysrow"><span class="idx">'+(bi*3+1)+'-'+(bi*3+3)+'</span>'+sys.map((s,k)=>'<span class="sys"><small>Sys '+(k+1)+'</small>'+s+'</span>').join('')+'</div>';
+  wrap.appendChild(el);});
+});
 </script>
