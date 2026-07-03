@@ -21,6 +21,7 @@ const FLY_FLIGHT_MS = 460;
 const NOD_CATEGORIES = [CATEGORY_IDS.FULL_HOUSE, CATEGORY_IDS.SMALL_STRAIGHT, CATEGORY_IDS.LARGE_STRAIGHT];
 
 const sfx = createFoley();
+const REDUCED_MOTION = window.matchMedia?.("(prefers-reduced-motion: reduce)").matches ?? false;
 
 let game = createGame();
 let phase = "idle"; // idle | rolling | celebrating | picking | scoring | over
@@ -177,15 +178,19 @@ function roll(fixedValues = null) {
     later(() => {
       if (isFirstRoll) {
         die.setInstant(true);
-        die.setPosition(108, 18 + Math.random() * 40);
+        if (REDUCED_MOTION) {
+          die.setPosition(target.x, target.y);
+        } else {
+          die.setPosition(108, 18 + Math.random() * 40);
+        }
         die.show(true);
         void die.button.offsetWidth;
         die.setInstant(false);
       }
       die.setTilt(Math.round(Math.random() * 32 - 16));
       die.setPosition(target.x, target.y);
-      die.spinTo(game.dice[dieIndex], 1 + Math.round(Math.random()));
-      die.toss();
+      die.spinTo(game.dice[dieIndex], REDUCED_MOTION ? 0 : 1 + Math.round(Math.random()));
+      if (!REDUCED_MOTION) die.toss();
       die.setLabel(game.dice[dieIndex], false);
     }, k * ROLL_STAGGER_MS);
     sfx.clack(k * (ROLL_STAGGER_MS / 1000) + ROLL_FLIGHT_MS / 1000 - 0.12);
@@ -224,18 +229,20 @@ function celebrateYatz() {
   view.dice.forEach((die) => die.setGold(true));
   view.setStatus("Yatz! Five of a kind.");
 
-  later(() => {
-    const lineY = 38;
-    [18, 34, 50, 66, 82].forEach((x, i) => {
-      positions[i] = { x, y: lineY };
-      view.dice[i].setTilt(0);
-      view.dice[i].setPosition(x, lineY);
-    });
-  }, 250);
+  if (!REDUCED_MOTION) {
+    later(() => {
+      const lineY = 38;
+      [18, 34, 50, 66, 82].forEach((x, i) => {
+        positions[i] = { x, y: lineY };
+        view.dice[i].setTilt(0);
+        view.dice[i].setPosition(x, lineY);
+      });
+    }, 250);
 
-  later(() => {
-    view.dice.forEach((die, i) => die.spinTo(game.dice[i], 1));
-  }, 700);
+    later(() => {
+      view.dice.forEach((die, i) => die.spinTo(game.dice[i], 1));
+    }, 700);
+  }
 
   sfx.yatz(0.7);
   later(() => {
@@ -299,6 +306,10 @@ function pick(categoryId) {
   diceValues.forEach((dieValue, i) => {
     const die = view.dice[i];
     const from = die.button.getBoundingClientRect();
+    if (REDUCED_MOTION) {
+      later(() => die.show(false), i * FLY_STAGGER_MS);
+      return;
+    }
     later(() => {
       die.show(false);
       const flyer = buildFlyDie(dieValue, size);

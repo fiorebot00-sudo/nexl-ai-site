@@ -661,11 +661,34 @@ button:focus-visible {
   100% { transform: scale(1); }
 }
 
+/* Reduced motion: calm, short movements instead of theatrics — never teleporting
+   dice, since the roll result IS game feedback. Flourish-only effects are cut. */
 @media (prefers-reduced-motion: reduce) {
-  *,
-  *::before,
-  *::after {
-    animation-duration: 1ms !important;
-    transition-duration: 1ms !important;
+  .die {
+    transition-duration: 200ms;
+  }
+
+  .cube {
+    transition-duration: 260ms;
+    transition-timing-function: ease-out;
+  }
+
+  .die.is-tossing .die-arc,
+  .die.is-tossing .die-shadow,
+  .felt-shine.is-on,
+  .chip.is-shimmering::after,
+  .chip.is-stamping {
+    animation: none;
+  }
+
+  .spotlight,
+  .yatz-stamp,
+  .bonus-fill,
+  .end-overlay {
+    transition-duration: 150ms;
+  }
+
+  .yatz-stamp {
+    transform: translate(-50%, -50%) scale(1.06) rotate(-5deg);
   }
 }
