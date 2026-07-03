@@ -191,6 +191,27 @@ const biomeFor = depth => BIOMES[Math.floor((depth - 1) / 3) % BIOMES.length];
 const lapDim = depth => Math.pow(0.92, Math.min(Math.floor((depth - 1) / 33), 3));
 // One 33-system lap through all 11 biomes = one galaxy; the wrap is a jump.
 const galaxyFor = depth => Math.floor((depth - 1) / 33) + 1;
+// Named galaxies + systems (D-adr-034). 11 biomes x 3 systems = 33 named systems
+// per galaxy lap; galaxy names cycle/extend as depth grows. Readout = galaxy · system.
+const GALAXY_NAMES = ['Home Reach', 'The Corvid Sprawl', 'Vela Expanse', 'Ashen Marches', 'Erebus Deep', 'The Pale Beyond'];
+const galaxyName = depth => GALAXY_NAMES[(galaxyFor(depth) - 1) % GALAXY_NAMES.length];
+const SYSTEM_NAMES = [
+  ['Cape Serene', 'Harbor Light', 'The Last Buoy'],       // HOME STRETCH
+  ['Tidewatch', 'Coral Gate', 'The Sunken Mile'],         // THE SHALLOWS
+  ['Nocturne', 'Inkfall', 'The Quiet Fathoms'],           // VIOLET DEEP
+  ['Frostgate', 'Rime Hollow', 'Glass Reach'],            // THE ICE SHELF
+  ['Verdant Rest', 'Spore Hollow', 'Green Threshold'],    // EMERALD VERGE
+  ['Amber Crossing', 'Dunefall', 'The Gilded Mile'],      // GILDED DRIFT
+  ['Slagworks', 'Derrick Field', 'The Iron Wake'],        // THE RUST BELT
+  ['Emberreef', 'The Warning', 'Bloodtide'],              // CRIMSON SHOALS
+  ['Null Station', 'The Blank', 'Silence'],               // DEAD SPACE
+  ['Forgefall', 'Cinder Gate', 'The Long Burn'],          // EMBER NEBULA
+  ['Last Light', 'The Brink', 'Threshold'],               // EVENT HORIZON
+];
+function sysName(depth) {
+  const within = (depth - 1) % 33;
+  return { galaxy: galaxyName(depth), system: SYSTEM_NAMES[Math.floor(within / 3)][within % 3] };
+}
 
 // One tip per system, seeded so it's stable across retries of that system.
 const TIPS = [
@@ -378,7 +399,7 @@ function straightShotWins(layout) {
 // ---------- system generation: gravity-forward from system 1, fast ramp ----------
 function difficulty(depth) {
   return {
-    nPlanets: Math.min(1 + Math.floor((depth + 1) / 2), 4),      // 1,2,2,3,3,4...
+    nPlanets: Math.min(1 + Math.floor((depth + 1) / 2), 2),      // capped at 2 (D-adr-033, Mike)
     gscale: Math.min(0.9 + 0.12 * (depth - 1), 1.7),
     gateR: Math.max(26, 54 - 2.2 * (depth - 1)),
   };
@@ -524,7 +545,7 @@ function genSystem(depth, runSeed) {
             const orb = { pi, orbR, a0: rng() * Math.PI * 2, om: (tier + rng() * 0.25) * (rng() < 0.5 ? -1 : 1) };
             if (depth >= 3 && roll < 0.30 && moonCount < 2) {
               layout.moons.push({ ...orb, r: oR }); moonCount++;
-            } else if (roll < 0.65) {
+            } else if (roll < 0.65 && layout.sats.length < 1) {   // one satellite per system (D-adr-033)
               layout.sats.push({ ...orb, r: 4, got: false });
             }
           }
@@ -1393,6 +1414,7 @@ function drawSat(sx, sy, now) {
   ctx.save();
   ctx.translate(sx, sy);
   ctx.rotate(now * 0.5);
+  ctx.scale(0.72, 0.72);              // forms run smaller on the field (D-adr-033, Mike)
   if (form === 'comms') {
     ctx.fillStyle = '#2f5fd4'; ctx.fillRect(-15, -3, 9, 6); ctx.fillRect(6, -3, 9, 6);
     ctx.strokeStyle = 'rgba(255,255,255,.5)'; ctx.lineWidth = .8; ctx.strokeRect(-15, -3, 9, 6); ctx.strokeRect(6, -3, 9, 6);
@@ -2784,7 +2806,7 @@ function draw() {
   ctx.textAlign = 'center';
   ctx.font = '600 9px Oxanium, -apple-system, sans-serif';
   ctx.fillStyle = '#8fa2c8';
-  ctx.fillText('SATS', VW / 2, 13);
+  ctx.fillText('SATELLITES', VW / 2, 13);
   ctx.save();
   ctx.translate(VW / 2 - 14, 29);
   ctx.scale(0.8 * satPop, 0.8 * satPop);
@@ -2798,16 +2820,22 @@ function draw() {
   ctx.font = '800 22px Oxanium, -apple-system, sans-serif';
   ctx.fillText(String(game.satsRun), 0, 0);
   ctx.restore();
-  // the chase
-  const gal = galaxyFor(game.depth);
+  // the location + record: galaxy name, system name, then BEST (D-adr-034)
   ctx.textAlign = 'right';
-  ctx.font = '600 9px Oxanium, -apple-system, sans-serif';
-  ctx.fillStyle = '#8fa2c8';
-  ctx.fillText(PLAYGROUND ? 'PLAYGROUND' : 'SYS ' + game.depth + (gal > 1 ? ' · G' + gal : ''), VW - 18, 13);
-  ctx.fillStyle = game.bestBeaten ? '#ffd166' : '#e8f0ff';
-  ctx.font = '800 20px Oxanium, -apple-system, sans-serif';
-  ctx.fillText(PLAYGROUND ? 'SYS ' + game.depth
-             : (game.bestBeaten ? 'NEW BEST' : 'BEST ' + best * PT), VW - 18, 38);
+  if (PLAYGROUND) {
+    ctx.font = '700 9px Oxanium, -apple-system, sans-serif'; ctx.fillStyle = '#8fa2c8';
+    ctx.fillText('PLAYGROUND', VW - 18, 12);
+    ctx.font = '800 15px Oxanium, -apple-system, sans-serif'; ctx.fillStyle = '#e8f0ff';
+    ctx.fillText('SANDBOX', VW - 18, 30);
+  } else {
+    const nm = sysName(game.depth);
+    ctx.font = '700 9px Oxanium, -apple-system, sans-serif'; ctx.fillStyle = '#8fa2c8';
+    ctx.fillText(nm.galaxy.toUpperCase(), VW - 18, 11);
+    ctx.font = '800 14px Oxanium, -apple-system, sans-serif'; ctx.fillStyle = game.bestBeaten ? '#ffd166' : '#e8f0ff';
+    ctx.fillText(nm.system.toUpperCase(), VW - 18, 26);
+    ctx.font = '700 11px Oxanium, -apple-system, sans-serif'; ctx.fillStyle = game.bestBeaten ? '#ffd166' : '#8fa2c8';
+    ctx.fillText(game.bestBeaten ? 'NEW BEST' : 'BEST ' + best * PT, VW - 18, 39);
+  }
   // (zips draw in the final overlay pass)
   // best-chase bar: cyan filling toward gold — same language as the aim ramp
   if (!PLAYGROUND) {
@@ -3034,12 +3062,16 @@ function draw() {
     ctx.fillText('ENTERING', VW / 2, VH * 0.26 - 34);
     ctx.fillStyle = '#e8f0ff';
     ctx.font = '800 30px Oxanium, -apple-system, sans-serif';
-    ctx.fillText(galaxyJump ? 'GALAXY ' + galaxyFor(game.depth) : biome.name, VW / 2, VH * 0.26);
+    ctx.fillText(galaxyJump ? galaxyName(game.depth).toUpperCase() : biome.name, VW / 2, VH * 0.26);
     ctx.fillStyle = '#8fa2c8';
     ctx.font = '600 13px Oxanium, -apple-system, sans-serif';
     ctx.fillText(galaxyJump ? 'new systems, new worlds — ' + biome.name.toLowerCase() + ' again, but not quite'
                             : biome.mood, VW / 2, VH * 0.26 + 24);
-    ctx.fillText('SYSTEM ' + game.depth, VW / 2, VH * 0.26 + 44);
+    const _nm = sysName(game.depth);
+    ctx.fillStyle = '#e8f0ff'; ctx.font = '800 15px Oxanium, -apple-system, sans-serif';
+    ctx.fillText(_nm.system.toUpperCase(), VW / 2, VH * 0.26 + 46);
+    ctx.fillStyle = '#8fa2c8'; ctx.font = '600 11px Oxanium, -apple-system, sans-serif';
+    ctx.fillText(_nm.galaxy, VW / 2, VH * 0.26 + 62);
     // the station so far
     const spN = partsUnlocked(career);
     const spNext = STATION_STAGES.find(p => career < p.at);
