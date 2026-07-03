@@ -160,6 +160,15 @@
     <div class="rec"><div class="h">Your call, locked</div><p>Placed only in <b>Crimson Shoals</b> (warm giant + white dwarf), as a background <em>signature</em> on some systems in that biome. Stationary, alpha-capped, softened &mdash; it deepens the sky without ever competing with the planets you're reading.</p></div>
   </section>
 
+  <!-- + GIANT PLANET -->
+  <section>
+    <div class="eyebrow"><span class="num g">+</span><span class="lbl">Giant planet &middot; looming backdrop</span></div>
+    <h2>A world too big to fit the frame</h2>
+    <p class="intent">A planet so large you only see an arc of it &mdash; the rest runs off-screen. Cratered, dark, looming. Placed in the darkest biome, <b>Event Horizon</b>. Three framings to choose from; a rare background signature, frozen during flight like everything else.</p>
+    <div class="grid-bin" id="giant-grid"></div>
+    <div class="rec"><div class="h">Pick a framing (or mix)</div><p>Each is the same idea from a different edge &mdash; rising from below, a corner limb, or filling one side. It stays dark and low-contrast so the planets you actually aim at still read as the brightest thing on screen. Tell me which framing (or ship 2&ndash;3 as random variants in the biome).</p></div>
+  </section>
+
   <!-- 6 &middot; AMBIENT TRAFFIC -->
   <section>
     <div class="eyebrow"><span class="num">6</span><span class="lbl">Ambient traffic &middot; naturals &amp; unnaturals</span></div>
@@ -329,6 +338,29 @@ function star(ctx,x,y,r,col){const c=col.length===7?col:'#ffffff';
    const cap=document.createElement('div');cap.className='cap';cap.innerHTML='<div class="n">'+p.t+'</div>';tile.appendChild(cap);grid.appendChild(tile);
    reg(cv,(ctx,w,h,t)=>{bg(ctx,w,h,p.b.bg,p.mode==='wire');stars(ctx,w,h,i*29+5,40,lerpC('#cfe0ff',p.b.hue,.2));binary(ctx,w,h,t,p.mode,p.b.hue);},{h:170});
  });})();
+
+// ============ + GIANT PLANET (darkest biome: Event Horizon) ============
+function giantPlanet(ctx,w,h,t,variant,rimHue){
+ const V=[{cx:w*0.5,cy:h+w*1.15,R:w*1.45},{cx:w*1.18,cy:h*1.24,R:w*1.15},{cx:-w*0.42,cy:h*0.42,R:w*1.02}][variant];
+ const cx=V.cx,cy=V.cy,R=V.R;const lit=[[-.5,-1],[-1,-.55],[1,-.4]][variant];
+ const lx=cx+lit[0]*R*0.75,ly=cy+lit[1]*R*0.75;
+ ctx.save();ctx.beginPath();ctx.arc(cx,cy,R,0,7);ctx.clip();
+ const g=ctx.createRadialGradient(lx,ly,R*0.05,cx,cy,R*1.15);
+ g.addColorStop(0,'#2a2040');g.addColorStop(.45,'#140f24');g.addColorStop(1,'#05030d');
+ ctx.fillStyle=g;ctx.fillRect(0,0,w,h);
+ const rr=mulberry32(variant*97+13);
+ for(let i=0;i<110;i++){const x=rr()*w,y=rr()*h,d=Math.hypot(x-cx,y-cy);if(d>R*0.996)continue;const cr=2+rr()*7.5;const la=Math.atan2(ly-y,lx-x);
+   ctx.fillStyle='rgba(0,0,0,.34)';ctx.beginPath();ctx.arc(x,y,cr,0,7);ctx.fill();
+   ctx.fillStyle='rgba(0,0,0,.28)';ctx.beginPath();ctx.arc(x-Math.cos(la)*cr*0.32,y-Math.sin(la)*cr*0.32,cr*0.6,0,7);ctx.fill();
+   ctx.strokeStyle='rgba('+hx(rimHue)+',.17)';ctx.lineWidth=1;ctx.beginPath();ctx.arc(x,y,cr*0.94,la-1.2,la+1.2);ctx.stroke();}
+ ctx.restore();
+ ctx.save();ctx.strokeStyle='rgba('+hx(rimHue)+',.32)';ctx.lineWidth=2.2;ctx.beginPath();ctx.arc(cx,cy,R,0,7);ctx.stroke();ctx.restore();
+}
+(function(){const grid=document.getElementById('giant-grid');if(!grid)return;const EH=BIOMES[10];const labels=['Rising from below','Corner limb','Filling one side'];
+ for(let v=0;v<3;v++){const tile=document.createElement('div');tile.className='tile';const cv=document.createElement('canvas');cv.height=170;tile.appendChild(cv);
+   const cap=document.createElement('div');cap.className='cap';cap.innerHTML='<div class="n">'+labels[v]+'</div><div class="d">Event Horizon</div>';tile.appendChild(cap);grid.appendChild(tile);
+   reg(cv,(ctx,w,h,t)=>{bg(ctx,w,h,EH.bg);stars(ctx,w,h,v*23+7,55,lerpC('#cfe0ff',EH.hue,.25));giantPlanet(ctx,w,h,t,v,EH.hue);},{h:170});}
+})();
 
 // ============ 6 \u00B7 AMBIENT TRAFFIC ============
 function amb(ctx,w,h,t,type,hue){const cx=w*0.5,cy=h*0.5;const dr=(t*0.3)%1;
