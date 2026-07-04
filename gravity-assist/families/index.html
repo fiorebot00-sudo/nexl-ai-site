@@ -1,0 +1,58 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Gravity Assist &mdash; Planet Families in Their Galaxies</title>
+<style>
+  :root{ --ink:#e8ecf5; --dim:#8b93a7; --line:#1c2233; --panel:#0c1020; --gold:#ffd166; }
+  *{ box-sizing:border-box; }
+  html,body{ margin:0; background:#05070e; color:var(--ink); font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,system-ui,sans-serif; -webkit-text-size-adjust:100%; }
+  .wrap{ max-width:1200px; margin:0 auto; padding:26px 18px 80px; }
+  h1{ font-size:22px; letter-spacing:.12em; margin:0 0 4px; font-weight:800; }
+  .sub{ color:var(--dim); font-size:13.5px; line-height:1.55; margin:0 0 22px; max-width:820px; }
+  .sub b{ color:var(--ink); }
+  .grid{ display:grid; grid-template-columns:repeat(auto-fill,minmax(230px,1fr)); gap:18px; }
+  .card{ background:var(--panel); border:1px solid var(--line); border-radius:12px; overflow:hidden; }
+  .shot{ position:relative; }
+  .shot img{ display:block; width:100%; height:auto; }
+  .idx{ position:absolute; top:8px; left:8px; font-size:10px; font-weight:800; letter-spacing:.08em;
+    background:rgba(6,9,16,.72); color:#cdd7ea; padding:2px 7px; border-radius:6px; }
+  .hdr{ padding:11px 12px 13px; }
+  .name{ font-size:14px; font-weight:800; letter-spacing:.03em; }
+  .fam{ font-size:11.5px; color:var(--dim); margin-top:3px; line-height:1.4; }
+  .fam b{ color:#9fd8c4; font-weight:600; }
+  footer{ margin-top:34px; color:var(--dim); font-size:11.5px; text-align:center; line-height:1.6; }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <h1>PLANET FAMILIES &mdash; IN THEIR GALAXIES</h1>
+  <p class="sub">Live in-game captures of all <b>11 galaxies</b> (3rd system of each, for the fullest planet count), exactly as shipped today. Each galaxy's planets are drawn with its own <b>technique</b> &mdash; now including <b>Void Reef&rarr;banded</b> and <b>Crimson Shoals&rarr;molten-veined</b>, so all 11 read as genuinely distinct families (no two share a technique).</p>
+  <div class="grid" id="grid"></div>
+  <footer>Ground-truth screenshots from the live renderer &mdash; not an approximation.<br>Planet-strengthening mock (banded / molten-veined) still available at <b>/gravity-assist/planets/</b>.</footer>
+</div>
+<script>
+var GAL=[
+  ['01-home','HOME STRETCH','natural gradients — earth, gas giants, rocky worlds'],
+  ['02-cathedral','NEBULA CATHEDRAL','caustic teal duotone (ice giants) — held from The Shallows'],
+  ['03-violet','VIOLET DEEP','sumi-e ink silhouettes — brush-stroke arcs'],
+  ['04-ice','THE ICE SHELF','faceted crystal duotone — pale blue facets'],
+  ['05-reef','VOID REEF','banded — every world a green-banded gas giant'],
+  ['06-gilded','GILDED DRIFT','flat papercut — two-tone tan silhouettes'],
+  ['07-rust','THE RUST BELT','hatched iron duotone — cross-hatch shading'],
+  ['08-crimson','CRIMSON SHOALS','molten-veined — dark crust, glowing magma cracks'],
+  ['09-dead','DEAD SPACE','wireframe blueprint — plotted, not rendered'],
+  ['10-ember','EMBER NEBULA','underlit forge — lit from below by lava'],
+  ['11-event','EVENT HORIZON','eclipse rim — dark discs, lit crescents']
+];
+var grid=document.getElementById('grid');
+for(var i=0;i<GAL.length;i++){ var g=GAL[i];
+  var card=document.createElement('article'); card.className='card';
+  card.innerHTML='<div class="shot"><span class="idx">'+(i+1)+' / 11</span><img loading="lazy" src="./img/'+g[0]+'.jpeg" alt="'+g[1]+'"></div>'+
+    '<div class="hdr"><div class="name">'+g[1]+'</div><div class="fam"><b>'+g[2]+'</b></div></div>';
+  grid.appendChild(card);
+}
+</script>
+</body>
+</html>

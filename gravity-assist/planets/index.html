@@ -1,0 +1,137 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Gravity Assist &mdash; Planet Families</title>
+<style>
+  :root{ --ink:#e8ecf5; --dim:#8b93a7; --line:#1c2233; --panel:#0c1020; --gold:#ffd166; }
+  *{ box-sizing:border-box; }
+  html,body{ margin:0; background:#05070e; color:var(--ink); font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,system-ui,sans-serif; -webkit-text-size-adjust:100%; }
+  .wrap{ max-width:1180px; margin:0 auto; padding:26px 18px 80px; }
+  h1{ font-size:22px; letter-spacing:.14em; margin:0 0 4px; font-weight:800; }
+  .sub{ color:var(--dim); font-size:13.5px; line-height:1.55; margin:0 0 22px; max-width:780px; }
+  .grid{ display:grid; grid-template-columns:repeat(auto-fill,minmax(200px,1fr)); gap:16px; }
+  .card{ background:var(--panel); border:1px solid var(--line); border-radius:12px; overflow:hidden; }
+  .card.spot{ border-color:#7a5f2b; }
+  .card canvas{ display:block; width:100%; aspect-ratio:4/3; background:#05070e; }
+  .hdr{ padding:9px 11px 12px; }
+  .tag{ display:inline-block; font-size:9.5px; letter-spacing:.12em; padding:2px 6px; border-radius:5px; background:#132033; color:#8fd8e6; margin-bottom:5px; }
+  .tag.new{ background:#2a2410; color:var(--gold); }
+  .name{ font-size:13.5px; font-weight:700; }
+  .tech{ font-size:11px; color:var(--dim); font-family:ui-monospace,SFMono-Regular,Menlo,monospace; margin-top:1px; }
+  footer{ margin-top:38px; color:var(--dim); font-size:11.5px; text-align:center; }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <h1>GRAVITY ASSIST &mdash; PLANET FAMILIES</h1>
+  <p class="sub">One card per <b>galaxy</b> (the 11 worlds). Each galaxy owns a distinct planet-drawing <b>technique</b> so its worlds never read the same as another galaxy's. Nine were already distinct; the two gold-bordered cards are the <b>new techniques</b> you approved &mdash; Emerald Verge &rarr; banded, Crimson Shoals &rarr; molten-veined. Rendered at game scale.</p>
+  <div class="grid" id="grid"></div>
+  <footer>Review only &mdash; approximation of the in-game render. Approve and I port the two new techniques into the game's real planet renderer.</footer>
+</div>
+<script>
+'use strict';
+var TAU=Math.PI*2;
+function mulberry32(a){return function(){a|=0;a=(a+0x6D2B79F5)|0;var t=Math.imul(a^a>>>15,1|a);t=(t+Math.imul(t^t>>>7,61|t))^t;return((t^t>>>14)>>>0)/4294967296;};}
+function lerp(a,b,t){return a+(b-a)*t;}
+function hx(c){c=c.replace('#','');return[parseInt(c.slice(0,2),16),parseInt(c.slice(2,4),16),parseInt(c.slice(4,6),16)];}
+function mix(c1,c2,t){var a=hx(c1),b=hx(c2);return'#'+a.map(function(v,i){return Math.round(lerp(v,b[i],t)).toString(16).padStart(2,'0');}).join('');}
+var PC={ mercury:['#b8aea6','#77706a','#3f3b38'], venus:['#f1c27d','#c88442','#6d3b1e'], earth:['#5eb3ff','#216fb5','#0e2e52'], mars:['#d47a42','#9b3f22','#3a1710'], jupiter:['#d7b078','#a06b3d','#5d351d'], saturn:['#d8c488','#a8874a','#5b4728'], uranus:['#9ee6dc','#55a9b0','#1d4b59'], neptune:['#6585ff','#3049a8','#121d4f'] };
+var ctx=null;
+
+function ring(p,front){ctx.save();ctx.translate(p.x,p.y);ctx.rotate(-.35);ctx.scale(1,.32);ctx.strokeStyle=front?'rgba(230,210,160,.75)':'rgba(217,195,145,.6)';ctx.lineWidth=p.r*.3;ctx.beginPath();ctx.arc(0,0,p.r*1.55,front?0:Math.PI,front?Math.PI:TAU);ctx.stroke();ctx.restore();}
+function sphere(p,cols,pm){
+  var g=(pm&&pm.mode==='underlit')?ctx.createRadialGradient(p.x+p.r*.2,p.y+p.r*.55,p.r*.1,p.x,p.y,p.r):ctx.createRadialGradient(p.x-p.r*.35,p.y-p.r*.4,p.r*.1,p.x,p.y,p.r);
+  g.addColorStop(0,cols[0]);g.addColorStop(.55,cols[1]);g.addColorStop(1,cols[2]);ctx.fillStyle=g;ctx.beginPath();ctx.arc(p.x,p.y,p.r,0,TAU);ctx.fill();
+}
+function shade(p){var sh=ctx.createRadialGradient(p.x-p.r*.45,p.y-p.r*.5,p.r*.1,p.x,p.y,p.r*1.02);sh.addColorStop(.62,'rgba(0,0,0,0)');sh.addColorStop(1,'rgba(0,0,0,.34)');ctx.fillStyle=sh;ctx.beginPath();ctx.arc(p.x,p.y,p.r,0,TAU);ctx.fill();}
+
+function planet(p,pm,t){
+  var cols=PC[p.type]||PC.earth;
+  if(pm&&pm.mode==='duotone')cols=cols.map(function(c){return mix(c,pm.hex,pm.k);});
+  if(pm&&pm.mode==='underlit')cols=cols.map(function(c){return mix(c,'#3a1610',.25);});
+  ctx.save();
+  // ----- stylized silhouettes -----
+  if(pm&&pm.mode==='ink'){ ctx.fillStyle='#0c0a14';ctx.beginPath();ctx.arc(p.x,p.y,p.r,0,TAU);ctx.fill();ctx.strokeStyle='rgba(205,190,255,.65)';ctx.lineWidth=1.8;[[0,1.9],[2.2,3.9],[4.2,5.6]].forEach(function(a){ctx.beginPath();ctx.arc(p.x,p.y,p.r,a[0],a[1]);ctx.stroke();});ctx.strokeStyle='rgba(205,190,255,.15)';ctx.beginPath();ctx.arc(p.x,p.y,p.r*.62,1,3.4);ctx.stroke();ctx.restore();return; }
+  if(pm&&pm.mode==='wire'){ ctx.fillStyle='#0b0b10';ctx.beginPath();ctx.arc(p.x,p.y,p.r,0,TAU);ctx.fill();ctx.strokeStyle='rgba(170,180,205,.55)';ctx.lineWidth=1.4;ctx.beginPath();ctx.arc(p.x,p.y,p.r,0,TAU);ctx.stroke();ctx.strokeStyle='rgba(170,180,205,.25)';[.45,.8].forEach(function(xs){ctx.save();ctx.translate(p.x,p.y);ctx.scale(xs,1);ctx.beginPath();ctx.arc(0,0,p.r,0,TAU);ctx.stroke();ctx.restore();});ctx.restore();return; }
+  if(pm&&pm.mode==='eclipse'){ ctx.fillStyle='#060410';ctx.beginPath();ctx.arc(p.x,p.y,p.r,0,TAU);ctx.fill();var d=Math.atan2(-160-p.y,p.x-p.x-40);ctx.strokeStyle='rgba(160,120,255,.6)';ctx.lineWidth=1.6;ctx.beginPath();ctx.arc(p.x,p.y,p.r,d-1.75,d+1.75);ctx.stroke();ctx.strokeStyle='rgba(160,120,255,.15)';ctx.beginPath();ctx.arc(p.x,p.y,p.r,d+Math.PI-1,d+Math.PI+1);ctx.stroke();ctx.restore();return; }
+  if(pm&&pm.mode==='flat2'){ if(p.type==='saturn')ring(p,false);ctx.fillStyle=mix(cols[1],pm.tint||'#b98a4e',.35);ctx.beginPath();ctx.arc(p.x,p.y,p.r,0,TAU);ctx.fill();ctx.save();ctx.beginPath();ctx.arc(p.x,p.y,p.r,0,TAU);ctx.clip();ctx.translate(p.x,p.y);ctx.rotate(.52);ctx.fillStyle='rgba(0,0,0,.28)';ctx.fillRect(p.r*.15,-p.r*1.2,p.r*1.2,p.r*2.4);ctx.restore();if(p.type==='saturn')ring(p,true);ctx.restore();return; }
+  // ----- gradient-sphere family (natural + duotone + the two NEW techniques) -----
+  if(p.type==='saturn')ring(p,false);
+  sphere(p,cols,pm);
+  ctx.save();ctx.beginPath();ctx.arc(p.x,p.y,p.r,0,TAU);ctx.clip();
+  if(pm&&pm.mode==='banded'){                       // NEW (Emerald): crisp horizontal bands
+    var bands=7;
+    for(var i=0;i<bands;i++){ var yy=p.y-p.r+ (i+.5)*(p.r*2/bands); var hh=p.r*2/bands*(.62+((i*7)%3)*.16);
+      ctx.fillStyle=(i%2? mix(pm.hex,'#ffffff',.14) : mix(pm.hex,'#000000',.28));
+      ctx.globalAlpha=.5; ctx.fillRect(p.x-p.r, yy-hh/2, p.r*2, hh); }
+    ctx.globalAlpha=1;
+    // a faint swirl storm
+    ctx.fillStyle='rgba(255,255,255,.14)';ctx.beginPath();ctx.ellipse(p.x+p.r*.28,p.y+p.r*.18,p.r*.22,p.r*.12,-.3,0,TAU);ctx.fill();
+  } else if(pm&&pm.mode==='veined'){                // NEW (Crimson): molten cracks glowing
+    ctx.fillStyle='rgba(0,0,0,.34)';ctx.fillRect(p.x-p.r,p.y-p.r,p.r*2,p.r*2);  // darken crust
+    var rng=mulberry32((p.type.charCodeAt(0)*131+Math.round(p.x))>>>0);
+    ctx.lineCap='round';
+    for(var v=0;v<5;v++){ var ax=p.x+(rng()-.5)*p.r*1.4, ay=p.y+(rng()-.5)*p.r*1.4;
+      ctx.strokeStyle='rgba(255,'+(90+rng()*60|0)+',60,'+(.5+rng()*.3).toFixed(2)+')';
+      ctx.shadowColor='rgba(255,120,50,.9)';ctx.shadowBlur=6;ctx.lineWidth=1.4+rng()*1.4;
+      ctx.beginPath();ctx.moveTo(ax,ay);
+      for(var k=0;k<3;k++){ ax+=(rng()-.5)*p.r*.9; ay+=(rng()-.5)*p.r*.9; ctx.lineTo(ax,ay); }
+      ctx.stroke();
+    }
+    ctx.shadowBlur=0;
+    ctx.fillStyle='rgba(255,140,70,.25)';ctx.beginPath();ctx.arc(p.x+p.r*.15,p.y+p.r*.2,p.r*.5,0,TAU);ctx.fill();
+  } else {                                           // natural / duotone detail
+    if(p.type==='jupiter'||p.type==='saturn'){ for(var i=0;i<4;i++){ ctx.fillStyle=['rgba(160,100,50,.5)','rgba(240,220,180,.45)','rgba(140,85,45,.5)','rgba(230,200,150,.4)'][i]; ctx.fillRect(p.x-p.r,p.y+(-.55+i*.36)*p.r,p.r*2,p.r*.18); } }
+    else if(p.type==='earth'){ ctx.fillStyle='rgba(47,158,82,.85)';[[-.35,-.1,.32],[.3,.32,.26],[.15,-.45,.2]].forEach(function(q){ctx.beginPath();ctx.arc(p.x+q[0]*p.r,p.y+q[1]*p.r,q[2]*p.r,0,TAU);ctx.fill();});}
+    if(pm&&pm.caustic){ ctx.strokeStyle='rgba(200,245,240,.16)';ctx.lineWidth=2;ctx.beginPath();ctx.arc(p.x,p.y,p.r*.88,-2.4,-1.2);ctx.stroke();ctx.beginPath();ctx.arc(p.x,p.y,p.r*.6,-2.0,-1.0);ctx.stroke(); }
+    if(pm&&pm.facets){ ctx.strokeStyle='rgba(230,250,255,.16)';ctx.lineWidth=p.r*.09;[-.52,-.17,.26].forEach(function(a){ctx.save();ctx.translate(p.x,p.y);ctx.rotate(a);ctx.beginPath();ctx.moveTo(-p.r*.9,-p.r*.45);ctx.lineTo(p.r*.5,-p.r*.45);ctx.stroke();ctx.restore();});}
+    if(pm&&pm.hatch){ ctx.rotate(Math.PI/4);ctx.strokeStyle='rgba(0,0,0,.22)';for(var d=-p.r;d<=p.r;d+=5){ctx.beginPath();ctx.moveTo(p.x-p.r*1.2,d+p.y);ctx.lineTo(p.x+p.r*1.2,d+p.y);ctx.stroke();} }
+  }
+  ctx.restore();
+  shade(p);
+  if(pm&&pm.mode==='underlit'){ ctx.strokeStyle='rgba(255,140,80,.4)';ctx.lineWidth=1.6;ctx.beginPath();ctx.arc(p.x,p.y,p.r-.5,Math.PI*.2,Math.PI*.8);ctx.stroke(); }
+  if(p.type==='saturn')ring(p,true);
+  ctx.restore();
+}
+
+// galaxy -> {bg, planetMode, types[3], technique label}
+var GAL=[
+  {name:'HOME STRETCH',   bg:'#0a0e1c', pm:null, types:['earth','saturn','mars'], tech:'natural gradients'},
+  {name:'THE SHALLOWS',   bg:'#08151a', pm:{mode:'duotone',hex:'#2e7f7a',k:.45,caustic:true}, types:['neptune','earth','saturn'], tech:'caustic teal duotone'},
+  {name:'VIOLET DEEP',    bg:'#0d0916', pm:{mode:'ink'}, types:['neptune','saturn','jupiter'], tech:'sumi-e ink'},
+  {name:'THE ICE SHELF',  bg:'#0e1626', pm:{mode:'duotone',hex:'#bfe4f2',k:.30,facets:true}, types:['uranus','neptune','earth'], tech:'faceted crystal'},
+  {name:'EMERALD VERGE',  bg:'#081711', pm:{mode:'banded',hex:'#2f7a4a'}, types:['jupiter','earth','saturn'], tech:'banded (NEW)', neu:true},
+  {name:'GILDED DRIFT',   bg:'#16110a', pm:{mode:'flat2',tint:'#b98a4e'}, types:['saturn','venus','jupiter'], tech:'flat papercut'},
+  {name:'THE RUST BELT',  bg:'#140b07', pm:{mode:'duotone',hex:'#8a4a26',k:.35,hatch:true}, types:['mars','mercury','jupiter'], tech:'hatched iron'},
+  {name:'CRIMSON SHOALS', bg:'#1a0a10', pm:{mode:'veined',hex:'#c14a5e'}, types:['mars','jupiter','neptune'], tech:'molten-veined (NEW)', neu:true},
+  {name:'DEAD SPACE',     bg:'#0d0d12', pm:{mode:'wire'}, types:['mercury','mars','jupiter'], tech:'wireframe blueprint'},
+  {name:'EMBER NEBULA',   bg:'#120705', pm:{mode:'underlit'}, types:['mars','jupiter','venus'], tech:'underlit forge'},
+  {name:'EVENT HORIZON',  bg:'#070512', pm:{mode:'eclipse'}, types:['neptune','uranus','jupiter'], tech:'eclipse rim'}
+];
+
+function fit(c){var d=Math.min(devicePixelRatio||1,2.5),w=c.clientWidth||200,h=Math.round(w*3/4);c.width=Math.round(w*d);c.height=Math.round(h*d);return{ctx:c.getContext('2d'),w:w,h:h,d:d};}
+function drawCard(c,g,t){
+  var f=fit(c);ctx=f.ctx;ctx.setTransform(f.d,0,0,f.d,0,0);
+  var bgg=ctx.createLinearGradient(0,0,0,f.h);bgg.addColorStop(0,g.bg);bgg.addColorStop(1,mix(g.bg,'#000000',.4));ctx.fillStyle=bgg;ctx.fillRect(0,0,f.w,f.h);
+  // faint stars
+  var rng=mulberry32(GAL.indexOf(g)*911+7);ctx.fillStyle='#cfe0ff';for(var i=0;i<26;i++){ctx.globalAlpha=.1+rng()*.25;ctx.beginPath();ctx.arc(rng()*f.w,rng()*f.h,.6+rng()*.9,0,TAU);ctx.fill();}ctx.globalAlpha=1;
+  // three planets of this galaxy's family
+  var xs=[f.w*.26,f.w*.6,f.w*.82], ys=[f.h*.58,f.h*.36,f.h*.66], rs=[f.w*.14,f.w*.17,f.w*.10];
+  for(var i=0;i<3;i++){ planet({x:xs[i],y:ys[i],r:rs[i],type:g.types[i]}, g.pm, t); }
+}
+var cards=[];
+function build(){ var grid=document.getElementById('grid');
+  for(var i=0;i<GAL.length;i++){ var g=GAL[i]; var card=document.createElement('article'); card.className='card'+(g.neu?' spot':'');
+    card.innerHTML='<canvas></canvas><div class="hdr"><span class="tag'+(g.neu?' new':'')+'">'+(g.neu?'NEW TECHNIQUE':'GALAXY')+'</span><div class="name">'+g.name+'</div><div class="tech">'+g.tech+'</div></div>';
+    (function(cv,gg){ cards.push(function(t){ drawCard(cv,gg,t); }); })(card.querySelector('canvas'),g);
+    grid.appendChild(card);
+  }
+}
+function loop(){var t=performance.now()/1000;for(var i=0;i<cards.length;i++)cards[i](t);requestAnimationFrame(loop);}
+addEventListener('resize',function(){document.querySelectorAll('canvas').forEach(function(c){c.width=0;});});
+build();requestAnimationFrame(loop);
+</script>
+</body>
+</html>

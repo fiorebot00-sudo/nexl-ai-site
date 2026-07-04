@@ -46,7 +46,8 @@ const SCORE = {
   STREAK_STEP: 5,  // per clean consecutive escape → +250·s (BEST only)
 };
 const START_LIVES = 6;            // ships at the start of a run (D-adr-028)
-const MAX_LIVES = 8;              // hangar ceiling; +1 ship per new biome up to this
+const MAX_LIVES = 10;             // hangar ceiling (D-adr-040); +1 ship per new galaxy, and +1 per SATS_PER_LIFE sats
+const SATS_PER_LIFE = 4;          // banked satellites to earn a ship (D-adr-040)
 const DRAG_FULL = 250;            // drag distance (px) for full power
 const MAX_FLIGHT = 10;            // s; after this the craft is "lost" (orbit trap)
 const G_BASE = 3.0e6;             // gravity scale for a 24u-radius planet at gscale 1
@@ -73,27 +74,28 @@ const STAR_LAYERS = (() => {
   return layers;
 })();
 
-// ---------- biomes: the 11-stop visual cycle (docs/STYLE-GUIDE.md) ----------
-// Biome every 3 systems; palettes swap but color ROLES never do; temperature
+// ---------- galaxies: the 11-stop visual cycle (docs/STYLE-GUIDE.md) ----------
+// Galaxy every 3 systems; palettes swap but color ROLES never do; temperature
 // and darkness track the difficulty ramp. Laps past 33 replay dimmer.
-const BIOMES = [
+const GALAXIES = [
   { name: 'HOME STRETCH', mood: 'the backyard of the solar system', bg: '#0a0e1c',
     decor: { nebula: 0.50, oort: 0.25, hues: ['120,220,255', '160,190,255', '190,160,255'], aMin: 0.04, aMax: 0.08 },
     stars: { density: 1.0, alpha: 1.0 },
     planets: { earth: 3, venus: 2, mars: 2, mercury: 1, jupiter: 1, saturn: 1 },
     ambient: { pNat: 0.45, pUnnat: 0.15, naturals: ['comet', 'comet', 'asteroid', 'meteor'], unnaturals: ['satellite', 'voyager', 'train'] },
     signature: 'homeGlow',
-    // B1 "last dusk at the cape" — the control biome: only one that stays classic space
+    // B1 "last dusk at the cape" — the control galaxy: only one that stays classic space
     bgGrad: ['#060a14', '#0d1322'], scenery: 'cape',
     ground: { top: '#3e4a56', style: 'city' } },
-  { name: 'THE SHALLOWS', mood: 'still gentle — first hint of elsewhere', bg: '#08151a',
-    decor: { nebula: 0.60, oort: 0.20, hues: ['120,255,190', '120,220,255', '90,200,220'], aMin: 0.04, aMax: 0.08 },
+  { name: 'NEBULA CATHEDRAL', mood: 'vast, sacred, hushed', bg: '#080b12',
+    decor: { nebula: 0.55, oort: 0.10, hues: ['150,170,225', '120,150,205', '170,190,235'], aMin: 0.04, aMax: 0.08 },
     stars: { density: 1.0, alpha: 0.95 },
     planets: { uranus: 3, neptune: 3, earth: 2, mercury: 1, saturn: 1 },
     ambient: { pNat: 0.45, pUnnat: 0.15, naturals: ['comet', 'comet', 'galaxy', 'aurora'], unnaturals: ['voyager', 'sail'] },
-    signature: 'godrays',
-    // B2 "you are underwater now" — brighter at the TOP (the surface is up there)
-    bgGrad: ['#0e191c', '#04090c'], skyMode: 'bubbles', scenery: 'kelp',
+    signature: 'cathedral',
+    // B2 Nebula Cathedral (D-adr-036) — vertical gas-column architecture over a cool
+    // blue-grey void (replaced the underwater god-rays/kelp/bubbles)
+    bgGrad: ['#07101a', '#05070d'],
     planetMode: { mode: 'duotone', hex: '#2e7f7a', k: 0.45, caustic: true },
     ground: { top: '#2e4a4a', style: 'pools' } },
   { name: 'VIOLET DEEP', mood: 'far from home now', bg: '#0d0916',
@@ -116,15 +118,16 @@ const BIOMES = [
     bgGrad: ['#0a1220', '#101b2e'], skyMode: 'snow', scenery: 'stalactites',
     planetMode: { mode: 'duotone', hex: '#bfe4f2', k: 0.30, facets: true },
     ground: { top: '#46566a', style: 'ice' } },
-  { name: 'EMERALD VERGE', mood: 'the last friendly place', bg: '#081711',
-    decor: { nebula: 0.60, oort: 0.15, hues: ['120,255,190', '90,230,150', '160,255,210'], aMin: 0.04, aMax: 0.08 },
+  { name: 'VOID REEF', mood: 'a reef in the dark', bg: '#06110c',
+    decor: { nebula: 0.45, oort: 0.10, hues: ['94,160,145', '120,180,160', '90,150,140'], aMin: 0.04, aMax: 0.08 },
     stars: { density: 0.9, alpha: 0.9 },
     planets: { earth: 3, uranus: 2, venus: 2, jupiter: 1, saturn: 1 },
     ambient: { pNat: 0.45, pUnnat: 0.15, naturals: ['galaxy', 'comet', 'comet', 'aurora'], unnaturals: ['satellite', 'sail'] },
-    signature: 'fireflies',
-    // B5 bioluminescent canopy — the last friendly place is alive
-    bgGrad: ['#05130c', '#0a1a10'], skyMode: 'spores', scenery: 'canopy',
-    planetMode: { mode: 'duotone', hex: '#2f7a4a', k: 0.40 },
+    signature: 'reef',
+    // B5 Void Reef (D-adr-036) — dark bioluminescent fronds hugging the frame edges
+    // (replaced the bioluminescent canopy/spores); banded planet family (D-adr-038)
+    bgGrad: ['#061018', '#05080b'],
+    planetMode: { mode: 'banded', hex: '#2f7a4a', k: 0.40 },
     ground: { top: '#31493c', style: 'moss' } },
   { name: 'GILDED DRIFT', mood: 'amber dust — the warm turn', bg: '#16110a',
     decor: { nebula: 0.35, oort: 0.50, hues: ['255,190,120', '255,210,150', '230,170,110'], aMin: 0.04, aMax: 0.08 },
@@ -151,10 +154,11 @@ const BIOMES = [
     stars: { density: 0.75, alpha: 0.85 },
     planets: { mars: 3, jupiter: 2, neptune: 2, mercury: 1 },
     ambient: { pNat: 0.45, pUnnat: 0.15, naturals: ['comet', 'asteroid', 'asteroid', 'ringed'], unnaturals: ['ufo', 'hulk'] },
-    signature: 'plumes',
-    // B8 the vent reef — abyss: coral fans, breathing smoker plumes, plankton
+    signature: 'gasclouds',
+    // B8 the vent reef — abyss: coral fans, drifting crimson gas clouds (D-adr-036,
+    // replaced the smoker plumes), plankton
     bgGrad: ['#150609', '#1a0a10'], skyMode: 'plankton', scenery: 'coral',
-    planetMode: { mode: 'duotone', hex: '#c14a5e', k: 0.40 },
+    planetMode: { mode: 'veined', hex: '#c14a5e', k: 0.40 },   // molten-veined family (D-adr-038)
     ground: { top: '#4a2733', style: 'reef' } },
   { name: 'DEAD SPACE', mood: 'nothing lives here', bg: '#0d0d12',
     decor: { nebula: 0.10, oort: 0.20, hues: ['150,150,170', '130,140,150'], aMin: 0.02, aMax: 0.04 },
@@ -187,72 +191,30 @@ const BIOMES = [
     planetMode: { mode: 'eclipse' },
     ground: { top: '#2a2440', style: 'glass' } },
 ];
-const biomeFor = depth => BIOMES[Math.floor((depth - 1) / 3) % BIOMES.length];
+const galaxyFor = depth => GALAXIES[Math.floor((depth - 1) / 3) % GALAXIES.length];
 const lapDim = depth => Math.pow(0.92, Math.min(Math.floor((depth - 1) / 33), 3));
-// One 33-system lap through all 11 biomes = one galaxy; the wrap is a jump.
-const galaxyFor = depth => Math.floor((depth - 1) / 33) + 1;
-// Named galaxies + systems (D-adr-034). 11 biomes x 3 systems = 33 named systems
-// per galaxy lap; galaxy names cycle/extend as depth grows. Readout = galaxy · system.
-const GALAXY_NAMES = ['Home Reach', 'The Corvid Sprawl', 'Vela Expanse', 'Ashen Marches', 'Erebus Deep', 'The Pale Beyond'];
-const galaxyName = depth => GALAXY_NAMES[(galaxyFor(depth) - 1) % GALAXY_NAMES.length];
-// Each galaxy has its OWN 33 system names (D-adr-034) so no name repeats within a
-// game: 6 galaxies x 33 = 198 unique systems, far beyond any single run. Biome order
-// per galaxy: Home Stretch, Shallows, Violet Deep, Ice Shelf, Emerald Verge, Gilded
-// Drift, Rust Belt, Crimson Shoals, Dead Space, Ember Nebula, Event Horizon.
-const GALAXY_SYSTEMS = [
-  [ // G1 Home Reach — nautical / homely
-    ['Cape Serene','Harbor Light','The Last Buoy'],['Tidewatch','Coral Gate','The Sunken Mile'],
-    ['Nocturne','Inkfall','The Quiet Fathoms'],['Frostgate','Rime Hollow','Glass Reach'],
-    ['Verdant Rest','Spore Hollow','Green Threshold'],['Amber Crossing','Dunefall','The Gilded Mile'],
-    ['Slagworks','Derrick Field','The Iron Wake'],['Emberreef','The Warning','Bloodtide'],
-    ['Null Station','The Blank','Silence'],['Forgefall','Cinder Gate','The Long Burn'],
-    ['Last Light','The Brink','Threshold'],
-  ],
-  [ // G2 The Corvid Sprawl — birds / flight / black
-    ['Rookery','Magpie Landing','Starling Cross'],['Heron Shallows','Kingfisher Bend','The Wading Mile'],
-    ['Raven Deep','Nightjar','Featherfall'],['Snowgoose','Ptarmigan','Frostwing'],
-    ['Green Aviary','Warbler Hollow','Nestwood'],['Kestrel Dunes','Goldfinch Drift','Sandpiper Mile'],
-    ['Crowbar Yards','Grackle Works','Rusthollow'],['Cardinal Reef','Redwing','The Shrike'],
-    ['Empty Rookery','The Moult','Carrion'],['Phoenix Down','Emberwing','Ashrook'],
-    ['Nightwing','The Vanishing','Corvus End'],
-  ],
-  [ // G3 Vela Expanse — sailing / navigation
-    ['Fair Winds','The Mooring','Cape Vela'],['Keelwater','Sextant Bay','The Reaching'],
-    ['Doldrums','Starless Run','The Trough'],['Iceberg Lee','Frost Rigging','Cold Latitudes'],
-    ['Landfall','The Green Anchor','Kelphaven'],['Trade Winds','Golden Latitude','Sirocco'],
-    ['Shipbreak','The Careen','Barnacle Yards'],['Red Sky Morning','The Squall','Coralburn'],
-    ['Becalmed','The Void Passage','Dead Reckoning'],['Firewatch','The Kiln','Emberwake'],
-    ["World's Edge",'The Overfall','Last Bearing'],
-  ],
-  [ // G4 Ashen Marches — fire / ash / frontier
-    ["Warden's Rest",'Beacon Hill','The Last Post'],['Ashwater','Emberford','The Sodden Line'],
-    ['Cinderdeep','The Smother','Nightsoot'],['Frostember','Ashen Shelf','The Cold Cinder'],
-    ['Greenfire','Char Hollow','The Regrowth'],['Scorched Mile','Emberdrift','The Gilded Ash'],
-    ['The Forgeyard','Slagmarch','Ironburn'],['The Pyre','Bloodember','Warning Fires'],
-    ['Cold Ashes','The Cinder Void','Burnt Silence'],['The Great Forge','Ashfall','Everburn'],
-    ['Emberbrink','The Last Spark','Ashthreshold'],
-  ],
-  [ // G5 Erebus Deep — underworld / dark / Greek
-    ["Charon's Rest",'Lethe Bank','The Dim Shore'],['Styx Shallows','Acheron Bend','The Drowning Mile'],
-    ['Erebus Proper','The Abyss','Nyx Fathoms'],['Cocytus','Frozen Lament','Tartarus Ice'],
-    ['Asphodel','The Grey Meadow',"Persephone's Rest"],['Elysian Sands','The Golden Shade','Hypnos Drift'],
-    ['Hephaestus Yards','The Dross','Ironshade'],['Phlegethon','The Red Descent','Emberstyx'],
-    ['The Void of Erebus','Thanatos','Utter Silence'],['The Underforge','Cinder of Hades','Everdark'],
-    ['The Final Shade','Oblivion','Erebus End'],
-  ],
-  [ // G6 The Pale Beyond — ghostly / final / light
-    ['Palecape','First Ghostlight','The Wan Shore'],['Palewater','Mistbend','The Fading Mile'],
-    ['The Pale Deep','Wraithfall','Dimfathom'],['Hoarfrost','Palerime','The White Silence'],
-    ['Ghostgreen','Palespore','The Last Meadow'],['Palegold','Wraithdrift','The Bleached Mile'],
-    ['Paleiron','The Rusted Ghost','Wanwork'],['Palereef','The Faint Warning','Ghosttide'],
-    ['The Pale Void','Utter Blank','The Blank Pale'],['Paleflame','The Cold Forge','Wraithember'],
-    ['The Pale Threshold',"Journey's End",'The Beyond'],
-  ],
+// A GALAXY (internally a "galaxy") is one of the 11 named worlds; it owns the
+// background AND its planet family. You play 3 SYSTEMS per galaxy, then advance to
+// the next; after all 11 the cycle loops (dimmed by lapDim). Readout = galaxy . system.
+// (The old per-lap "galaxy name" tier was removed in D-adr-035 — a galaxy IS the
+// world, so its name changes every 3 systems.) SYSTEM_NAMES holds the 3 galaxy-themed
+// system names per galaxy, in galaxy order:
+const SYSTEM_NAMES = [
+  ['Cape Serene','Harbor Light','The Last Buoy'],    // Home Stretch
+  ['Nave','Reliquary','The Vault'],                  // Nebula Cathedral
+  ['Nocturne','Inkfall','The Quiet Fathoms'],        // Violet Deep
+  ['Frostgate','Rime Hollow','Glass Reach'],         // The Ice Shelf
+  ['Lagoon Gate','Coral Run','The Trench'],          // Void Reef
+  ['Amber Crossing','Dunefall','The Gilded Mile'],   // Gilded Drift
+  ['Slagworks','Derrick Field','The Iron Wake'],     // The Rust Belt
+  ['Emberreef','The Warning','Bloodtide'],           // Crimson Shoals
+  ['Null Station','The Blank','Silence'],            // Dead Space
+  ['Forgefall','Cinder Gate','The Long Burn'],       // Ember Nebula
+  ['Last Light','The Brink','Threshold'],            // Event Horizon
 ];
 function sysName(depth) {
-  const within = (depth - 1) % 33;
-  const gi = (galaxyFor(depth) - 1) % GALAXY_SYSTEMS.length;
-  return { galaxy: galaxyName(depth), system: GALAXY_SYSTEMS[gi][Math.floor(within / 3)][within % 3] };
+  const gi = Math.floor((depth - 1) / 3) % GALAXIES.length;   // which galaxy (galaxy)
+  return { galaxy: galaxyFor(depth).name, system: SYSTEM_NAMES[gi][(depth - 1) % 3] };
 }
 
 // One tip per system, seeded so it's stable across retries of that system.
@@ -294,6 +256,10 @@ const PLANET_COLORS = {
 
 // ---------- starbase metagame: lifetime points build the station stage by stage
 // (16-stage construction narrative, docs/STATION-DESIGN.md) ----------
+// Feature flag (D-adr-039): the station metagame is HIDDEN for now (Mike — it wasn't
+// adding much). Career still accrues silently in localStorage, so flipping this back
+// to true restores the full metagame with progress intact.
+const STATION_ON = false;
 const STATION_STAGES = [
   { at: 5,   name: 'TRUSS SPINE' },
   { at: 12,  name: 'CORE MODULE' },
@@ -468,13 +434,13 @@ function genSystem(depth, runSeed) {
   const rng = mulberry32((runSeed ^ Math.imul(depth, 2654435761)) >>> 0);
   const diff = difficulty(depth);
 
-  // per-system atmosphere: nebula wisps or an Oort speck band, biome-tinted and
+  // per-system atmosphere: nebula wisps or an Oort speck band, galaxy-tinted and
   // seeded so each system's feel is part of its identity (identical on retries)
-  const biome = biomeFor(depth);
+  const galaxy = galaxyFor(depth);
   const dim = lapDim(depth);
   const decor = (() => {
-    if (biome.decorMode === 'none') return { type: 'clear' };   // the Blueprint plots nothing
-    if (biome.decorMode === 'brush') {                          // sumi-e strokes, seeded
+    if (galaxy.decorMode === 'none') return { type: 'clear' };   // the Blueprint plots nothing
+    if (galaxy.decorMode === 'brush') {                          // sumi-e strokes, seeded
       const strokes = [];
       const nb2 = 4 + Math.floor(rng() * 3);
       for (let i = 0; i < nb2; i++)
@@ -483,19 +449,19 @@ function genSystem(depth, runSeed) {
       return { type: 'brush', strokes };
     }
     const roll = rng();
-    if (roll < biome.decor.nebula) {
-      const hue = biome.decor.hues[Math.floor(rng() * biome.decor.hues.length)];
+    if (roll < galaxy.decor.nebula) {
+      const hue = galaxy.decor.hues[Math.floor(rng() * galaxy.decor.hues.length)];
       const blobs = [];
       const nb = 3 + Math.floor(rng() * 3);
       for (let i = 0; i < nb; i++)
         blobs.push({ x: rng() * VW, y: rng() * VH * 0.8, r: 60 + rng() * 110,
-                     a: ((biome.decor.aMin + rng() * (biome.decor.aMax - biome.decor.aMin)) * dim).toFixed(3), hue });
+                     a: ((galaxy.decor.aMin + rng() * (galaxy.decor.aMax - galaxy.decor.aMin)) * dim).toFixed(3), hue });
       return { type: 'nebula', blobs };
     }
-    if (roll < biome.decor.nebula + biome.decor.oort) {
+    if (roll < galaxy.decor.nebula + galaxy.decor.oort) {
       const specks = [];
       const yBase = 150 + rng() * 400, tilt = (rng() - 0.5) * 0.8;
-      const aScale = (biome.decor.aMax / 0.08) * dim;
+      const aScale = (galaxy.decor.aMax / 0.08) * dim;
       for (let i = 0; i < 55; i++) {
         const x = rng() * VW;
         specks.push({ x, y: yBase + x * tilt + (rng() - 0.5) * 90, r: 0.5 + rng() * 1.1,
@@ -506,15 +472,15 @@ function genSystem(depth, runSeed) {
     return { type: 'clear' };
   })();
 
-  // weighted planet-type pick per biome (unlisted types = 0), WITHOUT repeats —
-  // a system never shows the same world twice; if a biome runs out of types the
+  // weighted planet-type pick per galaxy (unlisted types = 0), WITHOUT repeats —
+  // a system never shows the same world twice; if a galaxy runs out of types the
   // repeat becomes a shade variant (see drawPlanet's detail tint)
   const pickPlanetType = (used) => {
-    let pool = Object.keys(biome.planets).filter(k => !used.has(k));
-    if (!pool.length) pool = Object.keys(biome.planets);
-    const total = pool.reduce((s, k) => s + biome.planets[k], 0);
+    let pool = Object.keys(galaxy.planets).filter(k => !used.has(k));
+    if (!pool.length) pool = Object.keys(galaxy.planets);
+    const total = pool.reduce((s, k) => s + galaxy.planets[k], 0);
     let w = rng() * total;
-    for (const k of pool) { w -= biome.planets[k]; if (w <= 0) { used.add(k); return k; } }
+    for (const k of pool) { w -= galaxy.planets[k]; if (w <= 0) { used.add(k); return k; } }
     used.add(pool[pool.length - 1]);
     return pool[pool.length - 1];
   };
@@ -645,6 +611,12 @@ const sfx = {
   },
   crash: () => { noiseBurst(0.28, 0.3, 800); tone(110, 38, 0.3, 'sine', 0.32); },
   lost: () => tone(300, 90, 0.5, 'sine', 0.12),
+  // newlife: warm rising major triad — earned a ship (D-adr-040)
+  newlife: () => {
+    tone(587, 587, 0.10, 'triangle', 0.16);
+    tone(740, 740, 0.10, 'triangle', 0.16, 0.08);
+    tone(880, 900, 0.20, 'triangle', 0.17, 0.16);
+  },
   escape: (nBest) => {
     tone(523, 523, 0.09, 'sine', 0.18);
     tone(659, 659, 0.09, 'sine', 0.18, 0.07);
@@ -680,7 +652,7 @@ function addCareer(n) {
   career += n;
   try { localStorage.setItem('gg_career', String(career)); } catch (e) {}
   const after = partsUnlocked(career);
-  if (after > before) {
+  if (after > before && STATION_ON) {
     game.partUnlocked = STATION_STAGES[after - 1].name;
     game.floats.push({ x: VW / 2, y: VH * 0.42, txt: 'NEW PART: ' + game.partUnlocked, vy: -18, life: 1.6, size: 22, color: '#ffd166' });
     sfx.escape(true);
@@ -733,12 +705,13 @@ const game = {
   partUnlocked: null,  // base part earned this run (shown on the death screen)
   hintsDone: false,    // onboarding hints vanish after the first fling of the session
   zips: [],            // slingshot rewards in transit: burst -> comet -> score punch
+  lifeZips: [],        // earned ships in transit: cyan comet -> hangar pip pop (D-adr-042)
   grazesThisFlight: 0, // slingshots banked this flight (death-screen receipt)
   wormSparks: [],      // cosmetic infalling sparks for the wormhole
   ambients: [],        // up to 2 background flybys (naturals/unnaturals) per system
   sysLoadAt: 0,
   orb: { base: 0, at: 0 },  // orbit clock: base + wall since 'at' (rebased at flight end)
-  splashAt: 0,         // biome-transition splash screen timer
+  splashAt: 0,         // galaxy-transition splash screen timer
   freezeT: 0,          // signature-animation time frozen during flight
 };
 
@@ -746,6 +719,8 @@ function loadSystem(depth) {
   // any slingshot reward still in transit lands now — banked is banked (BEST only)
   game.zips.forEach(z => { game.score += z.val; });
   game.zips = [];
+  if (game.lifeZips.length) game.lifePunchAt = performance.now();  // ship comet lands instantly (life already granted)
+  game.lifeZips = [];
   game.sys = PLAYGROUND ? playgroundSystem(depth) : genSystem(depth, game.runSeed);
   game.depth = depth;
   game.deepestSys = Math.max(game.deepestSys || 1, depth);
@@ -785,10 +760,10 @@ function loadSystem(depth) {
   game.sysLoadAt = performance.now();
   game.orb = { base: 0, at: performance.now() };
   game.ambients = [];
-  // biome-flavored background specials, up to TWO at once (D-adr-030): naturals
+  // galaxy-flavored background specials, up to TWO at once (D-adr-030): naturals
   // are common, unnaturals (man-made/alien) the rare treat. galaxy/aurora/meteor
   // are stationary/screen-wide; the rest drift across.
-  const ab = biomeFor(depth).ambient;
+  const ab = galaxyFor(depth).ambient;
   const SPEED = { comet: 13, asteroid: 8, voyager: 6, ufo: 16, satellite: 7, ringed: 5, sail: 7, hulk: 4, train: 22 };
   const STATIONARY = { galaxy: 1, aurora: 1, meteor: 1 };
   const rollType = () => {
@@ -969,7 +944,7 @@ function escapeGate() {
   const isNewBest = saveBest();
   if (isNewBest && !game.bestBeaten) {   // fire the moment BEST falls, mid-run
     game.bestBeaten = true;
-    game.floats.push({ x: VW / 2, y: 110, txt: 'NEW BEST!', vy: -20, life: 1.4, size: 26, color: '#ffd166' });
+    game.floats.push({ x: VW / 2, y: 110, txt: 'NEW HIGH!', vy: -20, life: 1.4, size: 26, color: '#ffd166' });
   }
   sfx.escape(isNewBest);
 }
@@ -1076,8 +1051,23 @@ function tick(dt) {
         game.satPunchAt = performance.now();
         addCareer(SCORE.SAT);
         game.scorePunchAt = performance.now();
-        game.floats.push({ x: sx, y: sy - 12, txt: '+' + PT + ' SAT', vy: -26, life: 0.9, size: 15, color: '#ffd166' });
-        sfx.assist();
+        // every SATS_PER_LIFE banked sats earns a ship, up to the hangar cap (D-adr-040)
+        const earnedLife = game.satsRun % SATS_PER_LIFE === 0 && game.lives < MAX_LIVES;
+        if (earnedLife) {
+          game.lives++;
+          game.floats.push({ x: sx, y: sy - 12, txt: '+' + PT + ' SAT', vy: -26, life: 0.9, size: 15, color: '#ffd166' });
+          // unmissable notification (D-adr-042): center banner + cyan ship-comet
+          // flying to the new hangar pip (same reward language as slingshot zips)
+          game.floats.push({ x: VW / 2, y: VH * 0.42, txt: 'EXTRA SHIP BANKED', vy: -14, life: 1.8, size: 25, color: '#7ef0ff' });
+          game.lifeZips.push({ x0: sx, y0: sy, tx: 26 + (game.lives - 1) * 18, ty: VH - 54,
+            t0: performance.now(), hold: 0.34, dur: 0.66, bend: -50, seed: (sx * 7 + sy) % 100 });
+          sfx.assist(); sfx.newlife();
+        } else {
+          // subtle progress toward the next ship, unless the hangar is already full
+          const need = game.lives < MAX_LIVES ? '  ' + (game.satsRun % SATS_PER_LIFE) + '/' + SATS_PER_LIFE : '';
+          game.floats.push({ x: sx, y: sy - 12, txt: '+' + PT + ' SAT' + need, vy: -26, life: 0.9, size: 15, color: '#ffd166' });
+          sfx.assist();
+        }
       }
     }
     const gdx = c.x - L.gate.x, gdy = c.y - L.gate.y;
@@ -1110,12 +1100,12 @@ function tick(dt) {
   if (game.state === 'win' &&
       ((game.winDone && performance.now() - game.winAt > 450) || performance.now() - game.winAt > 1400)) {
     game.flash = 1;                       // the flash is now *emerging* into the new system
-    const prevBiome = biomeFor(game.depth);
+    const prevGalaxy = galaxyFor(game.depth);
     loadSystem(game.depth + 1);
-    if (biomeFor(game.depth) !== prevBiome) {   // crossed into a new biome: splash
+    if (galaxyFor(game.depth) !== prevGalaxy) {   // crossed into a new galaxy: splash
       game.state = 'splash';
       game.splashAt = performance.now();
-      if (game.lives < MAX_LIVES) {             // reaching a new biome earns a ship (D-adr-028)
+      if (game.lives < MAX_LIVES) {             // reaching a new galaxy earns a ship (D-adr-028)
         game.lives++;
         game.floats.push({ x: VW / 2, y: VH * 0.62, txt: '+1 SHIP', vy: -20, life: 1.6, size: 22, color: '#7ef0ff' });
       }
@@ -1147,6 +1137,14 @@ function tick(dt) {
       break;
     }
   }
+  // earned-ship comet lands -> hangar pip pop + soft tick (life itself was granted at pickup)
+  for (let i = game.lifeZips.length - 1; i >= 0; i--) {
+    if ((performance.now() - game.lifeZips[i].t0) / 1000 >= game.lifeZips[i].hold + game.lifeZips[i].dur) {
+      game.lifeZips.splice(i, 1);
+      game.lifePunchAt = performance.now();
+      sfx.bank(0);
+    }
+  }
 
   if (game.dispScore < game.score)     // count-up: tick toward the real score
     game.dispScore = Math.min(game.score, game.dispScore + Math.max(4, (game.score - game.dispScore) * 6) * dt);
@@ -1168,7 +1166,7 @@ function tick(dt) {
 }
 
 // ---------- renderers ----------
-// E3 stylized planet modes (D-adr-023): the render mode IS the biome identity.
+// E3 stylized planet modes (D-adr-023): the render mode IS the galaxy identity.
 // Invariant: the planet edge stays the strongest edge on screen in every mode.
 function drawPlanetStylized(p, pm, cols) {
   const { x, y, r, type, detail } = p;
@@ -1260,14 +1258,14 @@ function drawPlanet(p) {
   // so even a repeated type never looks like a copy
   const tint = (detail - 0.5) * 0.36;
   let cols = PLANET_COLORS[type].map(c => lerpColor(c, tint > 0 ? '#ffffff' : '#000000', Math.abs(tint)));
-  // biome planet treatment (E3): stylized modes take over entirely; duotone and
+  // galaxy planet treatment (E3): stylized modes take over entirely; duotone and
   // underlit re-tint and continue through the natural pipeline
-  const pm = biomeFor(game.depth).planetMode || null;
+  const pm = galaxyFor(game.depth).planetMode || null;
   if (pm && (pm.mode === 'ink' || pm.mode === 'wire' || pm.mode === 'flat2' || pm.mode === 'eclipse')) {
     drawPlanetStylized(p, pm, cols);
     return;
   }
-  if (pm && pm.mode === 'duotone') cols = cols.map(c => lerpColor(c, pm.hex, pm.k));
+  if (pm && (pm.mode === 'duotone' || pm.mode === 'banded' || pm.mode === 'veined')) cols = cols.map(c => lerpColor(c, pm.hex, pm.k));
   if (pm && pm.mode === 'underlit') cols = cols.map(c => lerpColor(c, '#3a1610', 0.25));
   ctx.save();
 
@@ -1288,7 +1286,40 @@ function drawPlanet(p) {
   ctx.beginPath(); ctx.arc(x, y, r, 0, 7); ctx.fill();
 
   ctx.beginPath(); ctx.arc(x, y, r, 0, 7); ctx.clip();
-  if (type === 'jupiter' || type === 'saturn') {
+  // per-galaxy planet FAMILIES (D-adr-038): banded (Void Reef) and molten-veined
+  // (Crimson Shoals) take over the whole surface, so every world in the galaxy reads
+  // as one family — they replace the per-type detail below
+  const famMode = pm && (pm.mode === 'banded' || pm.mode === 'veined');
+  if (famMode && pm.mode === 'banded') {
+    const nb = 7, seed = Math.floor(detail * 5);
+    for (let i = 0; i < nb; i++) {
+      const yy = y - r + (i + 0.5) * (2 * r / nb);
+      const hh = (2 * r / nb) * (0.55 + ((i * 7 + seed) % 3) * 0.18);
+      ctx.fillStyle = i % 2 ? lerpColor(pm.hex, '#ffffff', 0.16) : lerpColor(pm.hex, '#000000', 0.30);
+      ctx.globalAlpha = 0.5; ctx.fillRect(x - r, yy - hh / 2, 2 * r, hh);
+    }
+    ctx.globalAlpha = 1;
+    if (detail > 0.5) {                // a great-spot storm on ~half the worlds
+      ctx.fillStyle = 'rgba(255,255,255,0.14)';
+      ctx.beginPath(); ctx.ellipse(x + (detail - 0.5) * r, y + r * 0.18, r * 0.2, r * 0.11, -0.3, 0, 7); ctx.fill();
+    }
+  } else if (famMode) {                // 'veined'
+    ctx.fillStyle = 'rgba(0,0,0,0.34)'; ctx.fillRect(x - r, y - r, 2 * r, 2 * r);   // dark crust
+    const vr = mulberry32((Math.floor(x) * 131 + Math.floor(y) * 17 + Math.floor(detail * 97) + 1) >>> 0);
+    ctx.lineCap = 'round';
+    for (let v = 0; v < 5; v++) {
+      let ax = x + (vr() - 0.5) * r * 1.3, ay = y + (vr() - 0.5) * r * 1.3;
+      ctx.strokeStyle = 'rgba(255,' + (90 + (vr() * 60 | 0)) + ',60,' + (0.5 + vr() * 0.3).toFixed(2) + ')';
+      ctx.shadowColor = 'rgba(255,120,50,0.9)'; ctx.shadowBlur = 6;
+      ctx.lineWidth = 1.3 + vr() * 1.3;
+      ctx.beginPath(); ctx.moveTo(ax, ay);
+      for (let k = 0; k < 3; k++) { ax += (vr() - 0.5) * r * 0.85; ay += (vr() - 0.5) * r * 0.85; ctx.lineTo(ax, ay); }
+      ctx.stroke();
+    }
+    ctx.shadowBlur = 0;
+    ctx.fillStyle = 'rgba(255,140,70,0.20)';       // faint magma glow
+    ctx.beginPath(); ctx.arc(x + r * 0.15, y + r * 0.2, r * 0.5, 0, 7); ctx.fill();
+  } else if (type === 'jupiter' || type === 'saturn') {
     const bands = type === 'jupiter'
       ? ['rgba(160,100,50,0.5)', 'rgba(240,220,180,0.45)', 'rgba(140,85,45,0.5)', 'rgba(230,200,150,0.4)']
       : ['rgba(200,160,100,0.4)', 'rgba(245,230,190,0.4)', 'rgba(180,140,90,0.35)'];
@@ -1434,7 +1465,7 @@ function drawMoon(mx, my, r) {
   ctx.beginPath(); ctx.arc(mx + r * 0.3, my - r * 0.25, r * 0.2, 0, 7); ctx.fill();
 }
 
-// the reward core — gold diamond, role-locked, constant in every biome (D-adr-029)
+// the reward core — gold diamond, role-locked, constant in every galaxy (D-adr-029)
 function satGold(now, s) {
   s = s || 1;
   ctx.save();
@@ -1445,13 +1476,13 @@ function satGold(now, s) {
   ctx.shadowBlur = 0;
   ctx.restore();
 }
-// Per-biome satellite forms (D-adr-029): the gold pickup core is constant; the hull
-// is native to the biome, so it never repeats a silhouette but always reads "grab me".
+// Per-galaxy satellite forms (D-adr-029): the gold pickup core is constant; the hull
+// is native to the galaxy, so it never repeats a silhouette but always reads "grab me".
 const SAT_FORMS = ['comms','buoy','origami','crystal','seedpod','astrolabe','drone','amphora','wire','lantern','prism'];
 function drawSat(sx, sy, now) {
-  const bio = biomeFor(game.depth);
+  const bio = galaxyFor(game.depth);
   const H = '#' + bio.decor.hues[0].split(',').map(n => (+n).toString(16).padStart(2, '0')).join('');
-  const form = SAT_FORMS[BIOMES.indexOf(bio)] || 'comms';
+  const form = SAT_FORMS[GALAXIES.indexOf(bio)] || 'comms';
   const t = now;
   ctx.save();
   ctx.translate(sx, sy);
@@ -1698,11 +1729,11 @@ function drawAmbient(now) {                             // up to 2 flybys (D-adr
   for (const a of game.ambients) drawAmbientOne(a, now);
 }
 function drawAmbientOne(a, now) {
-  // shapes/tints derive from the biome index + this flyby's own seed, so two
+  // shapes/tints derive from the galaxy index + this flyby's own seed, so two
   // asteroids in one system never look identical
-  const bio = biomeFor(game.depth);
-  const vb = BIOMES.indexOf(bio);
-  const hue = bio.decor.hues[0];                       // biome accent 'r,g,b'
+  const bio = galaxyFor(game.depth);
+  const vb = GALAXIES.indexOf(bio);
+  const hue = bio.decor.hues[0];                       // galaxy accent 'r,g,b'
   const hueHex = '#' + hue.split(',').map(n => (+n).toString(16).padStart(2, '0')).join('');
   const vrng = mulberry32((vb * 2971 + (a.seed || 7)) >>> 0);
   const t = (performance.now() - game.sysLoadAt) / 1000;
@@ -1810,7 +1841,7 @@ function drawAmbientOne(a, now) {
     ctx.globalAlpha = 0.55;
   } else if (a.type === 'ufo') {
     // intelligent craft: hover-then-dart every ~2.4s; three distinct alien
-    // vessel designs rotate by biome, all piloted by the classic grey
+    // vessel designs rotate by galaxy, all piloted by the classic grey
     const beat = 2.4, step = Math.floor(now / beat);
     const h = (st, k) => { const v = Math.sin(st * 127.1 + k * 311.7) * 43758.545; return v - Math.floor(v); };
     const f = Math.min((now / beat - step) / 0.22, 1);
@@ -1843,7 +1874,7 @@ function drawAmbientOne(a, now) {
         ctx.beginPath(); ctx.arc(-9.5 + k * 6.3, 2, 1.1, 0, 7); ctx.fill();
       }
     } else if (design === 1) {
-      // dark tri-craft: swept delta hull, biome-tinted corner lights, canopy
+      // dark tri-craft: swept delta hull, galaxy-tinted corner lights, canopy
       ctx.fillStyle = '#2a2f3a';
       ctx.beginPath();
       ctx.moveTo(0, -7); ctx.lineTo(12, 4.5); ctx.quadraticCurveTo(0, 8.5, -12, 4.5);
@@ -1938,15 +1969,15 @@ function drawShip(x, y, ang, thrust, now, squash) {
   ctx.restore();
 }
 
-// Biome signature touches — layer-1 background flourishes (STYLE-GUIDE §1).
+// Galaxy signature touches — layer-1 background flourishes (STYLE-GUIDE §1).
 // Per-speck randomness is seeded from depth so retries look identical; sigT is
 // frozen during flight so nothing background moves while the ship does.
-// E2: per-biome sky particle families (bubbles/snow/ash/spores/plankton/flecks).
-// Deterministic per biome; motion rides sigT so it freezes during flight.
+// E2: per-galaxy sky particle families (bubbles/snow/ash/spores/plankton/flecks).
+// Deterministic per galaxy; motion rides sigT so it freezes during flight.
 function drawSkyExtras(b, sigT, dim) {
   const mode = b.skyMode;
   if (!mode || mode === 'squares' || mode === 'streaks') return;  // glyph modes live in the star loop
-  const rng = mulberry32((BIOMES.indexOf(b) * 2477 + 991) >>> 0);
+  const rng = mulberry32((GALAXIES.indexOf(b) * 2477 + 991) >>> 0);
   if (mode === 'bubbles') {
     for (let i = 0; i < 10; i++) {
       const x0 = rng() * VW, y0 = rng() * VH, r = 1 + rng() * 1.5, a = 0.06 + rng() * 0.08, ph = rng() * 7;
@@ -2008,7 +2039,7 @@ function drawSkyExtras(b, sigT, dim) {
 function drawScenery(b, sigT) {
   const sc = b.scenery;
   if (!sc) return;
-  const rng = mulberry32((BIOMES.indexOf(b) * 5501 + 77) >>> 0);
+  const rng = mulberry32((GALAXIES.indexOf(b) * 5501 + 77) >>> 0);
   ctx.save();
   if (sc === 'cape') {              // warm dusk band melting into the ground glow
     const g = ctx.createLinearGradient(0, VH - 90, 0, VH);
@@ -2165,7 +2196,7 @@ function drawScenery(b, sigT) {
 
 // Rare deep-background bodies (D-adr-031): a binary star in Crimson Shoals, a
 // giant partial cratered planet in Event Horizon. Both stationary, alpha-capped,
-// seeded per system so they're a treat on ~40% of those biomes' systems.
+// seeded per system so they're a treat on ~40% of those galaxies' systems.
 function softStar(x, y, r, col, dim) {
   const c = col.length === 7 ? col : '#ffffff';
   const hxs = [parseInt(c.slice(1, 3), 16), parseInt(c.slice(3, 5), 16), parseInt(c.slice(5, 7), 16)].join(',');
@@ -2177,10 +2208,10 @@ function softStar(x, y, r, col, dim) {
   ctx.fillStyle = g2; ctx.beginPath(); ctx.arc(x, y, r * 0.85, 0, 7); ctx.fill();
 }
 function drawBackdrop(b, depth, dim) {
-  const vb = BIOMES.indexOf(b);
+  const vb = GALAXIES.indexOf(b);
   if (vb !== 7 && vb !== 10) return;
   const rng = mulberry32((game.runSeed ^ Math.imul(depth, 5209)) >>> 0);
-  if (rng() > 0.4) return;                     // only some systems in these biomes
+  if (rng() > 0.4) return;                     // only some systems in these galaxies
   if (vb === 7) {                              // CRIMSON SHOALS: binary star
     const hue = b.decor.hues[0];
     const cx = VW * (0.28 + rng() * 0.42), cy = VH * (0.15 + rng() * 0.12), R = 62 + rng() * 30, a = 0.7;
@@ -2320,20 +2351,62 @@ function drawSignature(b, depth, sigT, dim) {
     g.addColorStop(0, 'rgba(138,108,240,0.05)'); g.addColorStop(1, 'rgba(138,108,240,0)');
     ctx.fillStyle = g;
     ctx.fillRect(0, 0, VW, 140);
+  } else if (sig === 'cathedral') {
+    // Nebula Cathedral (The Shallows, D-adr-036): vast ribbed gas columns framing the
+    // route like architecture + faint arch ellipses; evenly spaced, idle sway only
+    for (let i = 0; i < 7; i++) {
+      const x = -60 + i * 92 + Math.sin(sigT * 0.12 + i) * 6, w = 46 + rng() * 28;
+      const rg = ctx.createLinearGradient(x, 0, x + w, VH);
+      rg.addColorStop(0, 'rgba(120,150,205,0)'); rg.addColorStop(0.5, 'rgba(120,150,205,0.07)'); rg.addColorStop(1, 'rgba(120,150,205,0)');
+      ctx.fillStyle = rg;
+      ctx.beginPath(); ctx.moveTo(x, 0); ctx.quadraticCurveTo(x + w * 0.7, VH * 0.38, x + w, VH);
+      ctx.lineTo(x + w + 34, VH); ctx.quadraticCurveTo(x + w * 0.8, VH * 0.38, x + 20, 0); ctx.fill();
+    }
+    ctx.strokeStyle = 'rgba(180,190,230,0.05)'; ctx.lineWidth = 1;
+    for (let y = 110; y < VH; y += 92) { ctx.beginPath(); ctx.ellipse(VW / 2, y, 210 - y * 0.08, 18, 0, 0, 7); ctx.stroke(); }
+  } else if (sig === 'reef') {
+    // Void Reef (Emerald Verge, D-adr-036): dark bioluminescent fronds hugging both
+    // side edges + faint plankton motes; fronds sway idle only
+    ctx.lineWidth = 2;
+    for (const side of [0, VW]) {
+      const dir = side ? -1 : 1;
+      for (let i = 0; i < 9; i++) {
+        const y = 95 + i * 76, sway = Math.sin(sigT * 0.35 + i + (side ? 1 : 0)) * 3;
+        const tx = side + dir * (34 + rng() * 72);
+        ctx.strokeStyle = 'rgba(94,160,145,0.12)';
+        ctx.beginPath(); ctx.moveTo(side, y); ctx.quadraticCurveTo(side + dir * (58 + rng() * 42), y - 25 + sway, tx, y - 70 + sway); ctx.stroke();
+        ctx.fillStyle = 'rgba(120,180,160,0.09)'; ctx.beginPath(); ctx.arc(tx, y - 70 + sway, 2.5, 0, 7); ctx.fill();
+      }
+    }
+    for (let i = 0; i < 24; i++) {
+      ctx.fillStyle = 'rgba(115,170,155,' + (0.05 + rng() * 0.05).toFixed(3) + ')';
+      ctx.beginPath(); ctx.arc(rng() * VW, rng() * VH, 1.5 + rng() * 2.5, 0, 7); ctx.fill();
+    }
+  } else if (sig === 'gasclouds') {
+    // Crimson Shoals (D-adr-036): faint crimson clouds sliding left->right at 3-9 px/s,
+    // gentler than the vertical starfield (replaces the plumes)
+    for (let i = 0; i < 5; i++) {
+      const y = 60 + rng() * VH * 0.62, r = 90 + rng() * 80, a = 0.028 + rng() * 0.03, drift = 3 + i * 1.5;
+      const span = VW + 2 * r, x = ((rng() * span + sigT * drift) % span) - r;
+      const hue = i % 2 ? '255,120,155' : '255,100,130';
+      const g = ctx.createRadialGradient(x, y, 0, x, y, r);
+      g.addColorStop(0, 'rgba(' + hue + ',' + a.toFixed(3) + ')'); g.addColorStop(0.6, 'rgba(' + hue + ',' + (a * 0.4).toFixed(3) + ')'); g.addColorStop(1, 'rgba(' + hue + ',0)');
+      ctx.fillStyle = g; ctx.beginPath(); ctx.ellipse(x, y, r, r * 0.62, 0, 0, 7); ctx.fill();
+    }
   }
   ctx.restore();
 }
 
-// ---------- biome launch-site terrain (STYLE-GUIDE: the name implies the ground) ----------
-// Deterministic per biome (seeded by biome index): each biome has THE launch
+// ---------- galaxy launch-site terrain (STYLE-GUIDE: the name implies the ground) ----------
+// Deterministic per galaxy (seeded by galaxy index): each galaxy has THE launch
 // site, a signature landmark, not a reroll. Dim, low-saturation, under the
 // luminance ceiling — terrain reads in the corner of the eye, never competes
 // with the flight. Tall features skip the pad band so the gantry stays clean.
 function groundYAt(x) { return VH + 560 - Math.sqrt(611 * 611 - (x - VW / 2) ** 2); }
-function drawGround(biome, now) {
-  const style = biome.ground && biome.ground.style;
+function drawGround(galaxy, now) {
+  const style = galaxy.ground && galaxy.ground.style;
   if (!style) return;
-  const rng = mulberry32((BIOMES.indexOf(biome) * 7919 + 12345) >>> 0);
+  const rng = mulberry32((GALAXIES.indexOf(galaxy) * 7919 + 12345) >>> 0);
   const padBand = x => Math.abs(x - PAD.x) < 34;
   // in-ground texture is clipped to the horizon disc; silhouettes rise above it
   const clipGround = () => { ctx.beginPath(); ctx.arc(VW / 2, VH + 560, 611, 0, 7); ctx.clip(); };
@@ -2497,23 +2570,23 @@ function panelBox(cx, cy, w, h, a) {
 
 function draw() {
   const now = performance.now() / 1000;
-  const biome = biomeFor(game.depth);
+  const galaxy = galaxyFor(game.depth);
   const dim = lapDim(game.depth);
   // signature/ambient motion freezes during flight (one-moving-focal-point rule)
   const sigT = game.state === 'flight' ? game.freezeT : now;
   ctx.setTransform(1, 0, 0, 1, 0, 0);
-  if (biome.bgGrad) {                // E1: vertical depth (or inversion — Shallows)
+  if (galaxy.bgGrad) {                // E1: vertical depth (or inversion — Shallows)
     const bgg = ctx.createLinearGradient(0, 0, 0, canvas.height);
-    bgg.addColorStop(0, biome.bgGrad[0]); bgg.addColorStop(1, biome.bgGrad[1]);
+    bgg.addColorStop(0, galaxy.bgGrad[0]); bgg.addColorStop(1, galaxy.bgGrad[1]);
     ctx.fillStyle = bgg;
   } else {
-    ctx.fillStyle = biome.bg;
+    ctx.fillStyle = galaxy.bg;
   }
   ctx.fillRect(0, 0, canvas.width, canvas.height);
 
   let shx = 0, shy = 0;
   if (game.shake > 0) {
-    const p = (performance.now() - (game.shakeAt || 0)) / (game.shakeDur || 0.42);
+    const p = (performance.now() - (game.shakeAt || 0)) / ((game.shakeDur || 0.42) * 1000);
     if (p >= 0 && p < 1) {                        // p<0 == inside the hitstop (frozen)
       const amp = game.shake * (1 - p);           // css px, decaying
       shx = (Math.random() - 0.5) * 2 * amp + (game.shakeKx || 0) * Math.pow(1 - p, 2);
@@ -2529,16 +2602,16 @@ function draw() {
   for (const L of STAR_LAYERS) {
     for (let i = 0; i < L.stars.length; i++) {
       const s = L.stars[i];
-      // biome star tuning: deterministic density thinning + alpha scale (heroes exempt)
-      if (!s.hero && (i % 20) >= biome.stars.density * 20) continue;
+      // galaxy star tuning: deterministic density thinning + alpha scale (heroes exempt)
+      if (!s.hero && (i % 20) >= galaxy.stars.density * 20) continue;
       const sy = (s.y + now * L.speed) % VH;
-      const sa = s.hero ? s.a : Math.min(s.a * biome.stars.alpha * dim, 0.55);
-      // E2: per-biome star glyph — plotter squares (Blueprint), infall streaks
+      const sa = s.hero ? s.a : Math.min(s.a * galaxy.stars.alpha * dim, 0.55);
+      // E2: per-galaxy star glyph — plotter squares (Blueprint), infall streaks
       // (the Lens); hero stars stay dots everywhere (the last lights)
-      if (biome.skyMode === 'squares' && !s.hero) {
+      if (galaxy.skyMode === 'squares' && !s.hero) {
         ctx.globalAlpha = sa;
         ctx.fillRect(s.x, sy, 1.4, 1.4);
-      } else if (biome.skyMode === 'streaks' && !s.hero) {
+      } else if (galaxy.skyMode === 'streaks' && !s.hero) {
         const at2 = Math.atan2(-240 - sy, VW / 2 - s.x);
         ctx.globalAlpha = sa * 0.8;
         ctx.beginPath(); ctx.moveTo(s.x, sy);
@@ -2550,11 +2623,11 @@ function draw() {
     }
   }
   ctx.globalAlpha = 1;
-  drawSkyExtras(biome, sigT, dim);   // E2: bubbles / snow / ash / spores / plankton
-  drawScenery(biome, sigT);          // E4: silhouette layer (darker than bg — free variety)
+  drawSkyExtras(galaxy, sigT, dim);   // E2: bubbles / snow / ash / spores / plankton
+  drawScenery(galaxy, sigT);          // E4: silhouette layer (darker than bg — free variety)
 
-  drawSignature(biome, game.depth, sigT, dim);
-  drawBackdrop(biome, game.depth, dim);   // rare binary star (Crimson Shoals) / giant planet (Event Horizon)
+  drawSignature(galaxy, game.depth, sigT, dim);
+  drawBackdrop(galaxy, game.depth, dim);   // rare binary star (Crimson Shoals) / giant planet (Event Horizon)
 
   // per-system atmosphere (nebula / Oort band)
   const D = S.decor;
@@ -2662,16 +2735,16 @@ function draw() {
     ctx.fillRect(-20, -20, VW + 40, VH + 40);
   }
 
-  // planet-surface horizon with the launch complex (biome-themed ground)
-  const gTop = lerpColor(biome.bg, (biome.ground && biome.ground.top) || '#3a4150', 0.55);
-  const gBot = lerpColor(biome.bg, '#0a0c12', 0.6);
+  // planet-surface horizon with the launch complex (galaxy-themed ground)
+  const gTop = lerpColor(galaxy.bg, (galaxy.ground && galaxy.ground.top) || '#3a4150', 0.55);
+  const gBot = lerpColor(galaxy.bg, '#0a0c12', 0.6);
   const gg2 = ctx.createLinearGradient(0, VH - 56, 0, VH);
   gg2.addColorStop(0, gTop); gg2.addColorStop(1, gBot);
   ctx.fillStyle = gg2;
   ctx.beginPath(); ctx.arc(VW / 2, VH + 560, 611, 0, 7); ctx.fill();
   ctx.strokeStyle = 'rgba(200,220,255,0.10)'; ctx.lineWidth = 1.5;
   ctx.beginPath(); ctx.arc(VW / 2, VH + 560, 611, 0, 7); ctx.stroke();
-  drawGround(biome, now);            // biome-signature terrain (name implies the site)
+  drawGround(galaxy, now);            // galaxy-signature terrain (name implies the site)
   // elevated platform + legs
   ctx.fillStyle = '#39414a';
   ctx.fillRect(PAD.x - 17, 743, 34, 4.5);
@@ -2842,6 +2915,19 @@ function draw() {
   ctx.font = '800 26px Oxanium, -apple-system, sans-serif';
   ctx.fillText(String(Math.round(game.dispScore * PT)), 0, 0);
   ctx.restore();
+  // persistent all-time HIGH score (localStorage gg_best), always on beside SCORE
+  // (D-adr-037): gold "NEW HIGH!" the moment this run overtakes it
+  if (!PLAYGROUND) {
+    const hiBeat = game.bestBeaten;
+    ctx.textAlign = 'right';
+    ctx.font = '600 9px Oxanium, -apple-system, sans-serif';
+    ctx.fillStyle = hiBeat ? '#ffd166' : '#8fa2c8';
+    ctx.fillText(hiBeat ? 'NEW HIGH!' : 'HIGH', 184, 13);
+    ctx.font = '800 17px Oxanium, -apple-system, sans-serif';
+    ctx.fillStyle = hiBeat ? '#ffd166' : '#cdd7ea';
+    ctx.fillText(String(best * PT), 184, 33);
+    ctx.textAlign = 'left';
+  }
   // satellites banked this run
   const sp = (performance.now() - game.satPunchAt) / 1000;
   const satPop = sp < 0.25 ? 1 + 0.5 * Math.sin((sp / 0.25) * Math.PI) : 1;
@@ -2862,21 +2948,20 @@ function draw() {
   ctx.font = '800 22px Oxanium, -apple-system, sans-serif';
   ctx.fillText(String(game.satsRun), 0, 0);
   ctx.restore();
-  // the location + record: galaxy name, system name, then BEST (D-adr-034)
+  // the location: galaxy name, then system name (BEST is now the dedicated HIGH
+  // readout beside SCORE — D-adr-037); system name goes gold on a new high
   ctx.textAlign = 'right';
   if (PLAYGROUND) {
     ctx.font = '700 9px Oxanium, -apple-system, sans-serif'; ctx.fillStyle = '#8fa2c8';
-    ctx.fillText('PLAYGROUND', VW - 18, 12);
+    ctx.fillText('PLAYGROUND', VW - 18, 13);
     ctx.font = '800 15px Oxanium, -apple-system, sans-serif'; ctx.fillStyle = '#e8f0ff';
-    ctx.fillText('SANDBOX', VW - 18, 30);
+    ctx.fillText('SANDBOX', VW - 18, 32);
   } else {
     const nm = sysName(game.depth);
     ctx.font = '700 9px Oxanium, -apple-system, sans-serif'; ctx.fillStyle = '#8fa2c8';
-    ctx.fillText(nm.galaxy.toUpperCase(), VW - 18, 11);
-    ctx.font = '800 14px Oxanium, -apple-system, sans-serif'; ctx.fillStyle = game.bestBeaten ? '#ffd166' : '#e8f0ff';
-    ctx.fillText(nm.system.toUpperCase(), VW - 18, 26);
-    ctx.font = '700 11px Oxanium, -apple-system, sans-serif'; ctx.fillStyle = game.bestBeaten ? '#ffd166' : '#8fa2c8';
-    ctx.fillText(game.bestBeaten ? 'NEW BEST' : 'BEST ' + best * PT, VW - 18, 39);
+    ctx.fillText(nm.galaxy.toUpperCase(), VW - 18, 14);
+    ctx.font = '800 15px Oxanium, -apple-system, sans-serif'; ctx.fillStyle = game.bestBeaten ? '#ffd166' : '#e8f0ff';
+    ctx.fillText(nm.system.toUpperCase(), VW - 18, 33);
   }
   // (zips draw in the final overlay pass)
   // best-chase bar: cyan filling toward gold — same language as the aim ramp
@@ -2916,32 +3001,46 @@ function draw() {
     ctx.font = '800 13px Oxanium, -apple-system, sans-serif';
     ctx.globalAlpha = near ? (0.7 + 0.3 * Math.sin(now * 6)) : 0.85;
     ctx.fillStyle = near ? '#ffd166' : '#7ef0ff';
-    ctx.fillText('BEST  −' + delta, VW / 2, 63);
+    ctx.fillText('HIGH  −' + delta, VW / 2, 63);
     ctx.globalAlpha = 1;
     game.chaseChipShown = true;
   }
   // the hangar: remaining ships, bottom-left
-  for (let i = 0; i < Math.min(game.lives, MAX_LIVES); i++) {
+  // earned ships in transit (lifeZips) don't dock until their comet arrives (D-adr-042)
+  const nShips = Math.max(Math.min(game.lives, MAX_LIVES) - game.lifeZips.length, 0);
+  // NB: now is SECONDS in draw(); lifePunchAt is performance.now() ms — use ms here
+  const lifePulse = Math.max(0, 1 - (performance.now() - (game.lifePunchAt || -1e9)) / 450);  // 0..1 fade after a ship docks
+  for (let i = 0; i < nShips; i++) {
     const lx = 26 + i * 18, ly = VH - 54;
+    const pop = i === nShips - 1 ? 1 + 0.5 * lifePulse : 1;   // the freshly-docked pip pops
     ctx.save();
-    ctx.globalAlpha = 0.9;
-    ctx.translate(lx, ly); ctx.scale(0.4, 0.4); ctx.translate(-lx, -ly);
+    ctx.globalAlpha = 0.9 + 0.1 * (i === nShips - 1 ? lifePulse : 0);
+    ctx.translate(lx, ly); ctx.scale(0.4 * pop, 0.4 * pop); ctx.translate(-lx, -ly);
     drawShip(lx, ly, -Math.PI / 2, false, now);
     ctx.restore();
   }
-  // base progress: the persistent goal that travels with you
-  const nParts = partsUnlocked(career);
-  const nextPart = STATION_STAGES.find(p => career < p.at);
-  const prevAt = nParts > 0 ? STATION_STAGES[nParts - 1].at : 0;
-  const frac = nextPart ? (career - prevAt) / (nextPart.at - prevAt) : 1;
+  if (lifePulse > 0 && nShips > 0) {             // docking ring around the newest pip
+    const rx = 26 + (nShips - 1) * 18, ry = VH - 54;
+    ctx.strokeStyle = 'rgba(6,9,16,0.5)'; ctx.lineWidth = 3;
+    ctx.beginPath(); ctx.arc(rx, ry, 6 + (1 - lifePulse) * 16, 0, 7); ctx.stroke();
+    ctx.strokeStyle = 'rgba(126,240,255,' + (0.85 * lifePulse).toFixed(3) + ')'; ctx.lineWidth = 2;
+    ctx.beginPath(); ctx.arc(rx, ry, 6 + (1 - lifePulse) * 16, 0, 7); ctx.stroke();
+  }
+  // base progress: the persistent goal that travels with you (hidden while STATION_ON=false)
   ctx.textAlign = 'center';
-  ctx.font = '600 10px Oxanium, -apple-system, sans-serif';
-  ctx.fillStyle = '#8fa2c8';
-  ctx.fillText('STATION ' + nParts + '/' + STATION_STAGES.length, VW / 2, VH - 26);
-  ctx.fillStyle = 'rgba(143,162,200,0.25)';
-  ctx.fillRect(VW / 2 - 40, VH - 20, 80, 4);
-  ctx.fillStyle = '#ffd166';
-  ctx.fillRect(VW / 2 - 40, VH - 20, 80 * Math.min(frac, 1), 4);
+  if (STATION_ON) {
+    const nParts = partsUnlocked(career);
+    const nextPart = STATION_STAGES.find(p => career < p.at);
+    const prevAt = nParts > 0 ? STATION_STAGES[nParts - 1].at : 0;
+    const frac = nextPart ? (career - prevAt) / (nextPart.at - prevAt) : 1;
+    ctx.font = '600 10px Oxanium, -apple-system, sans-serif';
+    ctx.fillStyle = '#8fa2c8';
+    ctx.fillText('STATION ' + nParts + '/' + STATION_STAGES.length, VW / 2, VH - 26);
+    ctx.fillStyle = 'rgba(143,162,200,0.25)';
+    ctx.fillRect(VW / 2 - 40, VH - 20, 80, 4);
+    ctx.fillStyle = '#ffd166';
+    ctx.fillRect(VW / 2 - 40, VH - 20, 80 * Math.min(frac, 1), 4);
+  }
 
   // one tip per system, top of the sky (stable across retries of the system)
   if (game.state === 'aim' && !game.chaseChipShown) {
@@ -2970,7 +3069,7 @@ function draw() {
     ctx.fillText(game.lives + ' ship' + (game.lives === 1 ? '' : 's') + ' left · your last path is marked', VW / 2, VH / 2 - 10);
     if (game.satsThisFlight > 0) {
       ctx.fillStyle = '#ffd166';
-      ctx.fillText('+' + game.satsThisFlight + ' satellite' + (game.satsThisFlight === 1 ? '' : 's') + ' banked to the station', VW / 2, VH / 2 + 14);
+      ctx.fillText('+' + game.satsThisFlight + ' satellite' + (game.satsThisFlight === 1 ? '' : 's') + ' banked' + (STATION_ON ? ' to the station' : ''), VW / 2, VH / 2 + 14);
     }
     if (game.grazesThisFlight > 0) {
       ctx.fillStyle = '#ffd166';
@@ -2983,17 +3082,20 @@ function draw() {
       ctx.globalAlpha = 1;
     }
   } else if (game.state === 'dead') {
-    // hangar empty: full run-over screen with the base you're building
-    drawStation(ctx, VW / 2, VH * 0.27, 1.8, partsUnlocked(career), now);
+    // hangar empty: full run-over screen (the base render is gated on STATION_ON)
     ctx.textAlign = 'center';
-    if (game.partUnlocked) {
-      ctx.fillStyle = '#ffd166';
-      ctx.font = '800 18px Oxanium, -apple-system, sans-serif';
-      ctx.fillText('NEW PART: ' + game.partUnlocked, VW / 2, VH * 0.27 + 52);
-    } else {
-      ctx.fillStyle = '#8fa2c8';
-      ctx.font = '600 12px Oxanium, -apple-system, sans-serif';
-      ctx.fillText(nextPart ? (nextPart.at - career) * PT + ' pts to ' + nextPart.name : 'BASE COMPLETE', VW / 2, VH * 0.27 + 52);
+    if (STATION_ON) {
+      const nextPart = STATION_STAGES.find(p => career < p.at);
+      drawStation(ctx, VW / 2, VH * 0.27, 1.8, partsUnlocked(career), now);
+      if (game.partUnlocked) {
+        ctx.fillStyle = '#ffd166';
+        ctx.font = '800 18px Oxanium, -apple-system, sans-serif';
+        ctx.fillText('NEW PART: ' + game.partUnlocked, VW / 2, VH * 0.27 + 52);
+      } else {
+        ctx.fillStyle = '#8fa2c8';
+        ctx.font = '600 12px Oxanium, -apple-system, sans-serif';
+        ctx.fillText(nextPart ? (nextPart.at - career) * PT + ' pts to ' + nextPart.name : 'BASE COMPLETE', VW / 2, VH * 0.27 + 52);
+      }
     }
     ctx.fillStyle = '#ff9d8a';
     ctx.font = '800 30px Oxanium, -apple-system, sans-serif';
@@ -3001,7 +3103,7 @@ function draw() {
     if (game.bestBeaten) {
       ctx.fillStyle = '#ffd166';
       ctx.font = '800 22px Oxanium, -apple-system, sans-serif';
-      ctx.fillText('NEW BEST!', VW / 2, VH / 2 - 6);
+      ctx.fillText('NEW HIGH!', VW / 2, VH / 2 - 6);
     }
     // itemized end-of-run tally (pinball end-of-ball receipt, D-adr-026): show
     // where the run's score came from, then the TOTAL and the record.
@@ -3022,7 +3124,7 @@ function draw() {
     ty += rows.length * 17 + 12;
     ctx.font = '800 19px Oxanium, -apple-system, sans-serif';
     ctx.fillStyle = game.bestBeaten ? '#ffd166' : '#e8f0ff';
-    ctx.fillText('RUN  ' + game.score * PT + '   ·   BEST  ' + best * PT, VW / 2, ty);
+    ctx.fillText('RUN  ' + game.score * PT + '   ·   HIGH  ' + best * PT, VW / 2, ty);
     if (game.solDemo) {
       // the winning shot's numbers, player-cyan: this is a flyable instruction
       const sspd = Math.hypot(game.solDemo.vx, game.solDemo.vy);
@@ -3089,54 +3191,58 @@ function draw() {
     ctx.globalAlpha = 1;
   }
 
-  // biome-transition splash: name the place, show the station taking shape
+  // galaxy-transition splash: name the place, show the station taking shape
   if (game.state === 'splash') {
     const st = (performance.now() - game.splashAt) / 1000;
     const fadeIn = Math.min(st / 0.3, 1);
     dimScreen(fadeIn);                               // dim the play behind (D-adr-024)
-    panelBox(VW / 2, VH * 0.5, VW - 48, VH * 0.62, fadeIn);   // faint "read me" panel
+    // panel shrinks when the station block is hidden so the splash stays compact
+    if (STATION_ON) panelBox(VW / 2, VH * 0.5, VW - 48, VH * 0.62, fadeIn);
+    else panelBox(VW / 2, VH * 0.30, VW - 48, VH * 0.34, fadeIn);
     ctx.globalAlpha = fadeIn;
     ctx.textAlign = 'center';
-    // a lap wrap (every 33 systems) is a GALAXY jump, not just another biome
-    const galaxyJump = game.depth > 1 && (game.depth - 1) % 33 === 0;
+    // every 3 systems you enter a new GALAXY (the world changes); systems 2-3 are
+    // deeper stops within the same galaxy
+    const newGalaxy = (game.depth - 1) % 3 === 0;
+    const _nm = sysName(game.depth);
     ctx.fillStyle = '#8fa2c8';
     ctx.font = '600 12px Oxanium, -apple-system, sans-serif';
-    ctx.fillText('ENTERING', VW / 2, VH * 0.26 - 34);
+    ctx.fillText(newGalaxy && game.depth > 1 ? 'ENTERING GALAXY' : 'ENTERING', VW / 2, VH * 0.26 - 34);
     ctx.fillStyle = '#e8f0ff';
     ctx.font = '800 30px Oxanium, -apple-system, sans-serif';
-    ctx.fillText(galaxyJump ? galaxyName(game.depth).toUpperCase() : biome.name, VW / 2, VH * 0.26);
+    ctx.fillText(_nm.galaxy.toUpperCase(), VW / 2, VH * 0.26);
     ctx.fillStyle = '#8fa2c8';
     ctx.font = '600 13px Oxanium, -apple-system, sans-serif';
-    ctx.fillText(galaxyJump ? 'new systems, new worlds — ' + biome.name.toLowerCase() + ' again, but not quite'
-                            : biome.mood, VW / 2, VH * 0.26 + 24);
-    const _nm = sysName(game.depth);
+    ctx.fillText(galaxy.mood, VW / 2, VH * 0.26 + 24);
     ctx.fillStyle = '#e8f0ff'; ctx.font = '800 15px Oxanium, -apple-system, sans-serif';
     ctx.fillText(_nm.system.toUpperCase(), VW / 2, VH * 0.26 + 46);
     ctx.fillStyle = '#8fa2c8'; ctx.font = '600 11px Oxanium, -apple-system, sans-serif';
-    ctx.fillText(_nm.galaxy, VW / 2, VH * 0.26 + 62);
-    // the station so far
-    const spN = partsUnlocked(career);
-    const spNext = STATION_STAGES.find(p => career < p.at);
-    drawStation(ctx, VW / 2, VH * 0.52, 2.2, spN, now);
-    ctx.fillStyle = '#8fa2c8';
-    ctx.font = '600 12px Oxanium, -apple-system, sans-serif';
-    ctx.fillText('STATION  ' + spN + '/' + STATION_STAGES.length, VW / 2, VH * 0.52 + 64);
-    const spPrev = spN > 0 ? STATION_STAGES[spN - 1].at : 0;
-    const spFrac = spNext ? (career - spPrev) / (spNext.at - spPrev) : 1;
-    ctx.fillStyle = 'rgba(143,162,200,0.25)';
-    ctx.fillRect(VW / 2 - 60, VH * 0.52 + 74, 120, 4);
-    ctx.fillStyle = '#ffd166';
-    ctx.fillRect(VW / 2 - 60, VH * 0.52 + 74, 120 * Math.min(spFrac, 1), 4);
-    if (spNext) {
+    ctx.fillText('SYSTEM ' + (((game.depth - 1) % 3) + 1) + ' OF 3', VW / 2, VH * 0.26 + 62);
+    // the station so far (hidden while STATION_ON=false)
+    if (STATION_ON) {
+      const spN = partsUnlocked(career);
+      const spNext = STATION_STAGES.find(p => career < p.at);
+      drawStation(ctx, VW / 2, VH * 0.52, 2.2, spN, now);
       ctx.fillStyle = '#8fa2c8';
-      ctx.font = '600 11px Oxanium, -apple-system, sans-serif';
-      ctx.fillText((spNext.at - career) * PT + ' pts to ' + spNext.name, VW / 2, VH * 0.52 + 96);
+      ctx.font = '600 12px Oxanium, -apple-system, sans-serif';
+      ctx.fillText('STATION  ' + spN + '/' + STATION_STAGES.length, VW / 2, VH * 0.52 + 64);
+      const spPrev = spN > 0 ? STATION_STAGES[spN - 1].at : 0;
+      const spFrac = spNext ? (career - spPrev) / (spNext.at - spPrev) : 1;
+      ctx.fillStyle = 'rgba(143,162,200,0.25)';
+      ctx.fillRect(VW / 2 - 60, VH * 0.52 + 74, 120, 4);
+      ctx.fillStyle = '#ffd166';
+      ctx.fillRect(VW / 2 - 60, VH * 0.52 + 74, 120 * Math.min(spFrac, 1), 4);
+      if (spNext) {
+        ctx.fillStyle = '#8fa2c8';
+        ctx.font = '600 11px Oxanium, -apple-system, sans-serif';
+        ctx.fillText((spNext.at - career) * PT + ' pts to ' + spNext.name, VW / 2, VH * 0.52 + 96);
+      }
     }
     if (st > 0.4) {
       ctx.globalAlpha = fadeIn * (0.5 + 0.3 * Math.sin(now * 4));
       ctx.fillStyle = '#e8f0ff';
       ctx.font = '600 14px Oxanium, -apple-system, sans-serif';
-      ctx.fillText('tap to continue', VW / 2, VH * 0.78);
+      ctx.fillText('tap to continue', VW / 2, STATION_ON ? VH * 0.78 : VH * 0.44);
     }
     ctx.globalAlpha = 1;
   }
@@ -3195,6 +3301,46 @@ function draw() {
         ctx.globalCompositeOperation = 'lighter';
         ctx.globalAlpha = k === 0 ? 0.95 : Math.max(0.5 - k * 0.055, 0.05);
         ctx.fillStyle = '#ffd166';
+        ctx.beginPath(); ctx.arc(px, py, r, 0, 7); ctx.fill();
+        ctx.restore();
+      }
+    }
+  }
+  // earned-ship comet: cyan pop at the 4th sat, then a bezier dive to the hangar (D-adr-042)
+  for (const z of game.lifeZips) {
+    const age = (performance.now() - z.t0) / 1000;
+    if (age < 0) continue;
+    if (age < z.hold) {                          // phase A: cyan pop & hold
+      const t = age / z.hold;
+      const s = t < 0.4 ? 1.4 * (t / 0.4) : 1.4 - 0.4 * ((t - 0.4) / 0.6);
+      const rt = Math.min(age / z.hold, 1);
+      ctx.strokeStyle = 'rgba(6,9,16,0.5)'; ctx.lineWidth = 4;
+      ctx.beginPath(); ctx.arc(z.x0, z.y0, 6 + rt * 26, 0, 7); ctx.stroke();
+      ctx.strokeStyle = 'rgba(126,240,255,' + (0.7 * (1 - rt)).toFixed(3) + ')'; ctx.lineWidth = 2;
+      ctx.beginPath(); ctx.arc(z.x0, z.y0, 6 + rt * 26, 0, 7); ctx.stroke();
+      halo(z.x0, z.y0, 8 * s);
+      ctx.save();
+      ctx.globalCompositeOperation = 'lighter';
+      ctx.fillStyle = '#7ef0ff';
+      ctx.globalAlpha = 0.35;
+      ctx.beginPath(); ctx.arc(z.x0, z.y0, 15 * s, 0, 7); ctx.fill();
+      ctx.globalAlpha = 0.95;
+      ctx.beginPath(); ctx.arc(z.x0, z.y0, 8 * s, 0, 7); ctx.fill();
+      ctx.restore();
+    } else {                                     // phase B: travel to the hangar pip
+      const u = Math.pow(Math.min((age - z.hold) / z.dur, 1), 2.2);
+      const mx = (z.x0 + z.tx) / 2 + z.bend, my = (z.y0 + z.ty) / 2;
+      const bez = (a, b, cc, q) => (1 - q) * (1 - q) * a + 2 * (1 - q) * q * b + q * q * cc;
+      const hs = 7 * (1 - 0.35 * u);
+      for (let k = 8; k >= 0; k--) {             // head + 8-segment tail
+        const q = Math.max(u - k * 0.04, 0);
+        const px = bez(z.x0, mx, z.tx, q), py = bez(z.y0, my, z.ty, q);
+        const r = k === 0 ? hs : Math.max(hs * 0.55 - k * 0.25, 1);
+        halo(px, py, r);
+        ctx.save();
+        ctx.globalCompositeOperation = 'lighter';
+        ctx.globalAlpha = k === 0 ? 0.95 : Math.max(0.5 - k * 0.055, 0.05);
+        ctx.fillStyle = '#7ef0ff';
         ctx.beginPath(); ctx.arc(px, py, r, 0, 7); ctx.fill();
         ctx.restore();
       }
@@ -3270,7 +3416,7 @@ requestAnimationFrame(frame);
 // ---------- debug hooks (used by automated tests; harmless in play) ----------
 window.GG = {
   game, simulate, solve, genSystem, difficulty, previewT, straightShotWins,
-  SCORE, PT, escapeGate, endRun, loadSystem, sysName, galaxyName,
+  SCORE, PT, escapeGate, endRun, loadSystem, sysName,
   fling: (vx, vy) => fling(vx, vy),
   flingSolution: () => { const s = game.sys.sol; fling(s.vx, s.vy); return s; },
   newRun,
