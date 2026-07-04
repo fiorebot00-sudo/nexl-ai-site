@@ -1,7 +1,9 @@
 {
   // deploy config for nexl-ai-site (Workers static assets).
   // Manual deploy: CLOUDFLARE_API_TOKEN=... npx wrangler deploy
-  // (Workers Builds git auto-deploy has been broken since ~Apr 27 2026 — token issue.)
+  // NB (2026-07-03): git push ALSO auto-deploys the committed tree ~20-30s later
+  // (Workers Builds came back). Commit+push everything you deploy, or the next
+  // push will silently revert your manual deploy.
   "name": "nexl-ai-site",
   "compatibility_date": "2026-04-27",
   "compatibility_flags": ["nodejs_compat"],
