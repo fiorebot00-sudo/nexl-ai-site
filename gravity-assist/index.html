@@ -45,6 +45,18 @@ const SCORE = {
   MULT_CAP: 5,     // flight multiplier ceiling (1 + grazes)
   STREAK_STEP: 5,  // per clean consecutive escape → +250·s (BEST only)
 };
+// DIRECT INSERTION (D-adr-043, docs/RESEARCH-PERFECT-LAUNCH.md): the near-straight
+// escape — the hole-in-one. E = flown path length / straight-line chord to the gate
+// entry; a literal straight winner is impossible by construction (straightShotWins
+// rejects those layouts), so E ≤ EFF is a real, rare precision feat. Requires ZERO
+// grazes — the pure line forfeits all slingshot pay, and this is the compensation
+// (pays as a ×2 escape mult, ×3 on a first-try "first pass"; run score only, career
+// banks base like every mult). Tune EFF from game.insertLog (every escape logs its E)
+// at roughly the top 2-3% of real escapes.
+const INSERT = {
+  EFF: 1.06,        // path-length / chord ceiling ("nearly straight")
+  DEV_FRAC: 0.05,   // chord fraction for the drift bound: max(gate.r, DEV_FRAC·chord)
+};
 const START_LIVES = 6;            // ships at the start of a run (D-adr-028)
 const MAX_LIVES = 10;             // hangar ceiling (D-adr-040); +1 ship per new galaxy, and +1 per SATS_PER_LIFE sats
 const SATS_PER_LIFE = 4;          // banked satellites to earn a ship (D-adr-040)
@@ -377,6 +389,50 @@ function willEnterGate(c, L) {
   return false;
 }
 
+// DIRECT INSERTION metrics (D-adr-043). pathMetrics: one pass over a flown path —
+// length, max perpendicular drift from the pad→gate chord, and the chord itself
+// (to the gate EDGE, where the crossing happens). measureRemainder: at the gateLock
+// latch, fly the REST of the flight with the same integrator willEnterGate uses,
+// accumulating the same numbers plus would-graze events. Deterministic physics makes
+// the combined verdict exact and immutable (the D-adr-017 contract: a yes can never
+// become a no) — so the mid-flight gold ignition is a guarantee, never a tease.
+function pathMetrics(fp, L) {
+  const cdx = L.gate.x - PAD.x, cdy = L.gate.y - PAD.y;
+  const cf = Math.hypot(cdx, cdy), ux = cdx / cf, uy = cdy / cf;
+  let len = 0, dev = 0;
+  for (let i = 2; i < fp.length; i += 2) {
+    len += Math.hypot(fp[i] - fp[i - 2], fp[i + 1] - fp[i - 1]);
+    const d = Math.abs((fp[i] - PAD.x) * uy - (fp[i + 1] - PAD.y) * ux);
+    if (d > dev) dev = d;
+  }
+  return { len, dev, chord: cf - L.gate.r };
+}
+function measureRemainder(c, L, grazedFlags) {
+  let x = c.x, y = c.y, vx = c.vx, vy = c.vy, t = c.t;
+  const cdx = L.gate.x - PAD.x, cdy = L.gate.y - PAD.y;
+  const cf = Math.hypot(cdx, cdy), ux = cdx / cf, uy = cdy / cf;
+  let len = 0, dev = 0, graze = false;
+  const steps = Math.ceil(Math.min(MAX_FLIGHT - t, 3) / DT);
+  for (let i = 0; i < steps; i++) {
+    const [ax, ay] = accel(x, y, L.planets, L.gscale);
+    vx += ax * DT; vy += ay * DT;
+    const px = x, py = y;
+    x += vx * DT; y += vy * DT;
+    t += DT;
+    len += Math.hypot(x - px, y - py);
+    const d = Math.abs((x - PAD.x) * uy - (y - PAD.y) * ux);
+    if (d > dev) dev = d;
+    for (let pi = 0; pi < L.planets.length; pi++) {
+      const p = L.planets[pi];
+      const ddx = x - p.x, ddy = y - p.y;
+      if (!grazedFlags[pi] && ddx * ddx + ddy * ddy < (p.r + ASSIST_MARGIN) ** 2) graze = true;
+    }
+    const gx = x - L.gate.x, gy = y - L.gate.y;
+    if (gx * gx + gy * gy < L.gate.r * L.gate.r) return { len, dev, graze };
+  }
+  return null;   // unreachable post-latch: willEnterGate already proved entry
+}
+
 function solve(layout) {
   for (let f = 0.35; f <= 1.001; f += 0.05) {
     const v = MIN_V + (MAX_V - MIN_V) * f;
@@ -617,6 +673,15 @@ const sfx = {
     tone(740, 740, 0.10, 'triangle', 0.16, 0.08);
     tone(880, 900, 0.20, 'triangle', 0.17, 0.16);
   },
+  // DIRECT INSERTION: two pings at the bank ladder's +8-semitone CEILING — a note
+  // the player only ever hears here (iOS has no vibration; audio is the tactile
+  // channel). Rolls straight into sfx.escape's arpeggio.
+  insertion: () => {
+    const p = Math.pow(2, 8 / 12);
+    tone(1050 * p, 1420 * p, 0.09, 'triangle', 0.17);
+    tone(1050 * p, 1420 * p, 0.09, 'triangle', 0.17, 0.09);
+    tone(1580 * p, 1580 * p, 0.07, 'sine', 0.10, 0.18);
+  },
   escape: (nBest) => {
     tone(523, 523, 0.09, 'sine', 0.18);
     tone(659, 659, 0.09, 'sine', 0.18, 0.07);
@@ -707,6 +772,11 @@ const game = {
   zips: [],            // slingshot rewards in transit: burst -> comet -> score punch
   lifeZips: [],        // earned ships in transit: cyan comet -> hangar pip pop (D-adr-042)
   grazesThisFlight: 0, // slingshots banked this flight (death-screen receipt)
+  insert: null,        // DIRECT INSERTION verdict, latched at gateLock: {tier, E} (D-adr-043)
+  insertThread: null,  // the flown golden-thread path shown through the win window
+  insertRings: null,   // violet collapse rings on the gate at entry
+  insertsRun: 0,       // insertions this run (end-of-run tally line)
+  insertLog: [],       // efficiency ratio E of EVERY escape this session (calibration)
   wormSparks: [],      // cosmetic infalling sparks for the wormhole
   ambients: [],        // up to 2 background flybys (naturals/unnaturals) per system
   sysLoadAt: 0,
@@ -735,6 +805,9 @@ function loadSystem(depth) {
   game.minGateDist = 1e9;
   game.endT = 0;
   game.solDemo = null;
+  game.insert = null;         // insertion FX never outlive their system (D-adr-043)
+  game.insertThread = null;
+  game.insertRings = null;
   // pick a y-band for the onboarding hints that no planet (or its orbiters) crosses
   game.hintY = (() => {
     for (const fy of [0.60, 0.50, 0.68, 0.42, 0.30]) {
@@ -806,6 +879,7 @@ function newRun() {
   game.bestChainVal = 0;
   game.chainThisFlight = 0;
   game.sysFails = 0;
+  game.insertsRun = 0;
   loadSystem(1);
 }
 
@@ -834,6 +908,7 @@ function fling(vx, vy) {
   game.grazed = game.sys.layout.planets.map(() => false);
   game.minGateDist = 1e9;
   game.gateLock = false;              // entry tell: latches true once the path is a hit
+  game.insert = null;                 // fresh flight, fresh insertion verdict
   game.sys.layout.sats.forEach(s => { s.got = false; });
   game.satsThisFlight = 0;
   game.grazesThisFlight = 0;
@@ -889,13 +964,25 @@ function endRun(byCrash, x, y) {
 
 function escapeGate() {
   const assists = game.grazed.filter(Boolean).length;
+  // Calibration (D-adr-043): EVERY escape logs its efficiency ratio so INSERT.EFF
+  // can be pinned from real play (window.GG.game.insertLog). The latch verdict is
+  // authoritative for FX/score; the post-hoc number here doubles as a cross-check.
+  const pm = pathMetrics(game.flightPath, game.sys.layout);
+  const postE = pm.len / pm.chord;
+  if (!PLAYGROUND) game.insertLog.push(+postE.toFixed(4));
+  const ins = game.insert;   // DIRECT INSERTION, latched at gateLock: {tier, E} | null
+  if (ins && Math.abs(ins.E - postE) > 1e-6)
+    console.warn('insertion E mismatch (latch vs flown)', ins.E, postE);
   // Escape economy (D-adr-025, RESEARCH-SCORING §Recommended):
   //   flight multiplier = 1 + grazes-this-flight (capped)
   //   escape bonus       = ESCAPE_BASE · system# · mult   → banks to BEST
   //   streak bonus       = STREAK_STEP · consecutive clean escapes → BEST
   // Only the FLAT base (ESCAPE_BASE · system#, mult/streak stripped) banks to the
   // career/station — decision (a): the 16-stage grind isn't inflated by a hot run.
-  const mult = Math.min(1 + assists, SCORE.MULT_CAP);
+  // A DIRECT INSERTION rides the same mult rail (D-adr-043): the zero-graze laser
+  // line pays ×2 (×3 on a first pass) — "your precision was the multiplier". Run
+  // score only, same class as assists; career still banks the flat base below.
+  const mult = ins ? (ins.tier === 2 ? 3 : 2) : Math.min(1 + assists, SCORE.MULT_CAP);
   const escapeBase = SCORE.ESCAPE_BASE * game.depth;   // career-banked portion
   const escapeUnits = escapeBase * mult;               // full run-score portion
   game.escapeStreak++;
@@ -934,13 +1021,37 @@ function escapeGate() {
   const g = game.sys.layout.gate;
   const ay = Math.min(Math.max(g.y - g.r - 20, 150), VH - 150);
   const seq = [{ txt: 'SYSTEM ' + game.depth, size: 16, color: '#8fa2c8' }];
-  if (mult > 1) seq.push({ txt: 'ASSIST ×' + mult, size: 20, color: '#ffd166', tick: 1 });
+  if (ins) {
+    // the insertion fills the guaranteed-empty ASSIST slot — precision IS the mult
+    seq.push({ txt: 'DIRECT ×2', size: 20, color: '#ffd166', tick: 1 });
+    if (ins.tier === 2) seq.push({ txt: 'FIRST PASS ×3', size: 17, color: '#ffd166', tick: 2 });
+  } else if (mult > 1) seq.push({ txt: 'ASSIST ×' + mult, size: 20, color: '#ffd166', tick: 1 });
   seq.push({ txt: '+' + (escapeUnits * PT), size: 27, color: '#ffd166', tick: 2 });
   if (streakUnits) seq.push({ txt: 'STREAK ×' + game.escapeStreak + '  +' + (streakUnits * PT), size: 17, color: '#7ef0ff', tick: 4 });
   seq.forEach((s, k) => game.floats.push({
     x: g.x, y: ay - k * 28, txt: s.txt, vy: -22, life: 1.3, size: s.size, color: s.color,
     delay: k * 0.22, sfx: s.tick ? (() => sfx.bank(s.tick)) : null,
   }));
+  if (ins) {
+    // DIRECT INSERTION ceremony (D-adr-043): gold center banner (TRIPLE SLINGSHOT
+    // recipe) + the measured deviation in the info register — precision celebrated
+    // with precision; violet collapse rings on the gate (WORMHOLE-RESEARCH #5, the
+    // gate keeps its own family — no new gold); the flown path becomes the golden
+    // thread for the win window; two ceiling pings roll into the escape arpeggio.
+    game.floats.push({ x: VW / 2, y: VH * 0.40, txt: 'DIRECT INSERTION', vy: -14, life: 1.8, size: 25, color: '#ffd166' });
+    game.floats.push({ x: VW / 2, y: VH * 0.40 + 24, txt: 'DEVIATION +' + ((ins.E - 1) * 100).toFixed(1) + '%',
+                       vy: -14, life: 1.6, size: 13, color: '#8fa2c8', delay: 0.15 });
+    game.insertThread = { path: game.flightPath.slice(), at: performance.now() };
+    game.insertRings = { at: performance.now() };
+    game.insertsRun++;
+    sfx.insertion();
+    // lifetime stats — no new HUD (D-adr-039 pattern): tally line + window.GG only
+    try {
+      localStorage.setItem('gg_inserts', String((parseInt(localStorage.getItem('gg_inserts') || '0', 10) || 0) + 1));
+      const bestE = parseFloat(localStorage.getItem('gg_bestEff') || '9');
+      if (ins.E < bestE) localStorage.setItem('gg_bestEff', ins.E.toFixed(4));
+    } catch (e) {}
+  }
   const isNewBest = saveBest();
   if (isNewBest && !game.bestBeaten) {   // fire the moment BEST falls, mid-run
     game.bestBeaten = true;
@@ -1083,6 +1194,19 @@ function tick(dt) {
     if (!game.gateLock && gd < L.gate.r * 2.4 && willEnterGate(c, L)) {
       game.gateLock = true;
       game.gateLockAt = performance.now() / 1000;   // ramps the lean + slow-mo in
+      // DIRECT INSERTION pre-arm (D-adr-043): at the moment of certainty, measure
+      // flown-so-far + the exact remainder (same integrator, graze-aware) — the
+      // verdict is final here, so the gold ignition can never fire on a lie.
+      if (!PLAYGROUND && game.grazesThisFlight === 0) {
+        const rem = measureRemainder(c, L, game.grazed);
+        if (rem && !rem.graze) {
+          const fm = pathMetrics(game.flightPath, L);
+          const E = (fm.len + rem.len) / fm.chord;
+          const dev = Math.max(fm.dev, rem.dev);
+          if (E <= INSERT.EFF && dev <= Math.max(L.gate.r, INSERT.DEV_FRAC * fm.chord))
+            game.insert = { tier: game.sysFails ? 1 : 2, E };   // 2 = first try on this system
+        }
+      }
     }
   }
   if (game.state === 'win' && game.winCraft && !game.winDone) {
@@ -1930,7 +2054,11 @@ function drawAmbientOne(a, now) {
   ctx.restore();
 }
 
-function drawShip(x, y, ang, thrust, now, squash) {
+// gold (0..1, D-adr-043): the DIRECT INSERTION ignition — reward register earned at
+// the trajectory-verified latch. The body gradient leans toward gold and the glow
+// warms (satGold breathe at the call site); flaps/canards stay stainless, and only
+// the in-flight + win-dive call sites ever pass it (pad ship, pips, demo untouched).
+function drawShip(x, y, ang, thrust, now, squash, gold) {
   ctx.save();
   ctx.translate(x, y); ctx.rotate(ang);
   if (squash) ctx.scale(1 - squash, 1 + squash);  // loaded-spring anticipation on drag
@@ -1949,10 +2077,18 @@ function drawShip(x, y, ang, thrust, now, squash) {
   ctx.fillStyle = '#96a0a9';
   ctx.beginPath(); ctx.moveTo(-11.5, -4); ctx.lineTo(-15.5, -8.5); ctx.lineTo(-6.5, -4.2); ctx.closePath(); ctx.fill();
   ctx.beginPath(); ctx.moveTo(-11.5, 4); ctx.lineTo(-15.5, 8.5); ctx.lineTo(-6.5, 4.2); ctx.closePath(); ctx.fill();
-  // stainless body + nose
-  ctx.shadowColor = 'rgba(200,230,255,0.8)'; ctx.shadowBlur = 8;
+  // stainless body + nose (gold-lit when a DIRECT INSERTION is latched)
+  ctx.shadowColor = gold ? 'rgba(255,209,102,' + (0.85 * Math.min(gold * 2, 1)).toFixed(3) + ')'
+                         : 'rgba(200,230,255,0.8)';
+  ctx.shadowBlur = 8 + (gold ? 6 * gold : 0);
   const bg = ctx.createLinearGradient(0, -4.5, 0, 4.5);
-  bg.addColorStop(0, '#eef2f5'); bg.addColorStop(0.45, '#aeb8c0'); bg.addColorStop(1, '#59636c');
+  if (gold) {
+    bg.addColorStop(0, lerpColor('#eef2f5', '#ffd166', 0.40 * gold));
+    bg.addColorStop(0.45, lerpColor('#aeb8c0', '#ffd166', 0.40 * gold));
+    bg.addColorStop(1, lerpColor('#59636c', '#ffd166', 0.40 * gold));
+  } else {
+    bg.addColorStop(0, '#eef2f5'); bg.addColorStop(0.45, '#aeb8c0'); bg.addColorStop(1, '#59636c');
+  }
   ctx.fillStyle = bg;
   ctx.beginPath();
   ctx.moveTo(-12, -4.5);
@@ -2833,23 +2969,86 @@ function draw() {
     ctx.globalAlpha = 1;
   }
 
-  // hero trail: additive tapering ribbon; lingers and fades ~2s after a death
+  // hero trail: additive tapering ribbon; lingers and fades ~2s after a death.
+  // On a latched DIRECT INSERTION (D-adr-043) the ribbon matures cyan→white→gold
+  // toward the ship — the aim power ramp's own language, the one sanctioned
+  // player→reward crossover (D-adr-020) — with a white-hot core: the laser line.
   const trailFade = game.state === 'dead' ? Math.max(0, 1 - (performance.now() - game.deadAt) / 2000) : 1;
   if (game.trail.length > 2 && trailFade > 0 && game.state !== 'aim') {
+    const insGk = game.insert ? Math.min(Math.max((now - game.gateLockAt) / 0.35, 0), 1) : 0;
     ctx.save();
     ctx.globalCompositeOperation = 'lighter';
     ctx.strokeStyle = '#7ef0ff';
     ctx.lineCap = 'round';
     const t = game.trail, n = t.length / 2;
-    for (let i = 1; i < n; i++) {
-      ctx.globalAlpha = 0.55 * (i / n) * trailFade;
-      ctx.lineWidth = 0.5 + 3 * (i / n);
+    const seg = (i) => {
       ctx.beginPath();
       ctx.moveTo(t[(i - 1) * 2], t[(i - 1) * 2 + 1]);
       ctx.lineTo(t[i * 2], t[i * 2 + 1]);
       ctx.stroke();
+    };
+    for (let i = 1; i < n; i++) {
+      if (insGk > 0) {
+        const f = (i / n) * insGk;
+        ctx.strokeStyle = f < 0.5 ? lerpColor('#7ef0ff', '#ffffff', f * 2)
+                                  : lerpColor('#ffffff', '#ffd166', (f - 0.5) * 2);
+      }
+      ctx.globalAlpha = 0.55 * (i / n) * trailFade;
+      ctx.lineWidth = 0.5 + 3 * (i / n);
+      seg(i);
+    }
+    if (insGk > 0) {
+      ctx.strokeStyle = '#ffffff';               // white-hot core inside the gold sheath
+      for (let i = 1; i < n; i++) {
+        ctx.globalAlpha = 0.35 * (i / n) * insGk * trailFade;
+        ctx.lineWidth = (0.5 + 3 * (i / n)) * 0.4;
+        seg(i);
+      }
+      const gwPos = 1 - (now - game.gateLockAt) / 0.4;   // fuse glint: sweeps ship→tail
+      if (gwPos > 0) {                                    // at the latch — certainty made visible
+        for (let i = 1; i < n; i++) {
+          const dw = Math.abs(i / n - gwPos);
+          if (dw > 0.08) continue;
+          ctx.globalAlpha = 0.9 * (1 - dw / 0.08) * trailFade;
+          ctx.lineWidth = (0.5 + 3 * (i / n)) * 1.6;
+          seg(i);
+        }
+      }
     }
     ctx.restore();
+  }
+  // DIRECT INSERTION golden thread (D-adr-043): the full flown path burns gold for
+  // the win window — the solution-reveal ritual in reverse (the game shows losers
+  // the answer; this shows the player their own) — with a white-hot bead retracing
+  // pad→gate (comet ease). Fades with the win flash; nothing persists (no ghost
+  // push, no cross-run leakage — D-adr-014/017 protected).
+  if (game.state === 'win' && game.insertThread) {
+    const it = game.insertThread, ip = it.path, ipn = ip.length / 2;
+    const iAge = (performance.now() - it.at) / 1000;
+    const iFade = Math.max(0, 1 - iAge / 1.4);
+    if (iFade > 0 && ipn > 2) {
+      ctx.fillStyle = '#ffd166';
+      ctx.globalAlpha = 0.45 * iFade;
+      for (let i = 4; i < ipn; i += 6) {
+        ctx.beginPath(); ctx.arc(ip[i * 2], ip[i * 2 + 1], 1.8, 0, 7); ctx.fill();
+      }
+      const bu = Math.pow(Math.min(iAge / 0.6, 1), 1.7);
+      const bi = Math.min(Math.floor(bu * (ipn - 1)), ipn - 1);
+      const bx = ip[bi * 2], by = ip[bi * 2 + 1];
+      ctx.globalAlpha = 0.55 * iFade;                       // dark under-halo (P1b)
+      ctx.fillStyle = 'rgba(6,9,16,1)';
+      ctx.beginPath(); ctx.arc(bx, by, 6.5, 0, 7); ctx.fill();
+      ctx.save();
+      ctx.globalCompositeOperation = 'lighter';
+      ctx.globalAlpha = 0.95 * iFade;
+      ctx.fillStyle = '#ffffff';
+      ctx.beginPath(); ctx.arc(bx, by, 3.5, 0, 7); ctx.fill();
+      ctx.globalAlpha = 0.4 * iFade;
+      ctx.fillStyle = '#ffd166';
+      ctx.beginPath(); ctx.arc(bx, by, 8, 0, 7); ctx.fill();
+      ctx.restore();
+      ctx.globalAlpha = 1;
+    }
   }
   if (game.state === 'flight') {
     const c = game.craft;
@@ -2867,7 +3066,12 @@ function draw() {
       const ta = Math.atan2(ady, adx);
       ang += (((ta - ang + Math.PI * 3) % (Math.PI * 2)) - Math.PI) * wgt;
     }
-    drawShip(c.x, c.y, ang, true, now);
+    // DIRECT INSERTION ignition: cyan→gold over the same 0.35s ease as the nose
+    // lean, then a gentle satGold-style breathe — a shimmer, not a strobe
+    const goldK = game.insert
+      ? Math.min(Math.max((now - game.gateLockAt) / 0.35, 0), 1) * (0.85 + 0.15 * Math.sin(now * 9))
+      : 0;
+    drawShip(c.x, c.y, ang, true, now, 0, goldK);
   } else if (game.state === 'win' && game.winCraft && !game.winDone) {
     // entry dive: continuous with flight — same velocity at the crossing,
     // steering + acceleration carry it into the throat, fading as it goes
@@ -2877,7 +3081,9 @@ function draw() {
     ctx.save();
     ctx.globalAlpha = Math.max(Math.min(d / (g2.r * 0.5), 1), 0);
     ctx.translate(w.x, w.y); ctx.scale(sc, sc); ctx.translate(-w.x, -w.y);
-    drawShip(w.x, w.y, Math.atan2(w.vy, w.vx), true, now);
+    // a golden ship dives golden — the reward visibly flows into the gate (D-adr-021)
+    drawShip(w.x, w.y, Math.atan2(w.vy, w.vx), true, now, 0,
+             game.insertThread ? 0.85 + 0.15 * Math.sin(now * 9) : 0);
     ctx.restore();
   } else if (game.state === 'aim') {
     const squash = game.drag && game.preview ? 0.04 * game.previewPower : 0;
@@ -3114,6 +3320,8 @@ function draw() {
       ['BEST CHAIN', '+' + (game.bestChainVal * PT)],
       ['DEEPEST SYSTEM', String(game.deepestSys)],
     ];
+    // itemize-never-lump (D-adr-026): insertions get a receipt line only when earned
+    if (game.insertsRun) rows.splice(2, 0, ['DIRECT INSERTIONS', '×' + game.insertsRun]);
     rows.forEach((r, i) => {
       ctx.textAlign = 'right'; ctx.fillStyle = '#8fa2c8';
       ctx.fillText(r[0], VW / 2 - 8, ty + i * 17);
@@ -3253,6 +3461,30 @@ function draw() {
     ctx.fillStyle = 'rgba(6,9,16,0.55)';
     ctx.beginPath(); ctx.arc(x, y, r + 3, 0, 7); ctx.fill();
   };
+  // DIRECT INSERTION entry: collapse rings in the wormhole's OWN violet family
+  // (WORMHOLE-RESEARCH candidate #5, earmarked as a win-moment effect) — three
+  // rings contract onto the exact win radius; no new gold touches the gate.
+  if (game.insertRings) {
+    const irt = (performance.now() - game.insertRings.at) / 1000;
+    if (irt > 0.75) game.insertRings = null;
+    else {
+      const gI = game.sys.layout.gate;
+      for (let k = 0; k < 3; k++) {
+        const u = (irt - k * 0.09) / 0.45;
+        if (u < 0 || u > 1) continue;
+        const rr = (2.2 - k * 0.45) * gI.r * (1 - u) + gI.r * u;
+        ctx.strokeStyle = 'rgba(6,9,16,' + (0.5 * (1 - u)).toFixed(3) + ')'; ctx.lineWidth = 3.5;
+        ctx.beginPath(); ctx.arc(gI.x, gI.y, rr + 1.5, 0, 7); ctx.stroke();
+        ctx.strokeStyle = 'rgba(138,108,240,' + (0.8 * (1 - u)).toFixed(3) + ')'; ctx.lineWidth = 2;
+        ctx.beginPath(); ctx.arc(gI.x, gI.y, rr, 0, 7); ctx.stroke();
+        ctx.fillStyle = 'rgba(230,220,255,' + (0.7 * (1 - u)).toFixed(3) + ')';   // spark tips
+        for (let s2 = 0; s2 < 4; s2++) {
+          const sa = s2 * Math.PI / 2 + k * 0.5 + u * 0.6;
+          ctx.beginPath(); ctx.arc(gI.x + Math.cos(sa) * rr, gI.y + Math.sin(sa) * rr, 1.5, 0, 7); ctx.fill();
+        }
+      }
+    }
+  }
   for (const z of game.zips) {
     const age = (performance.now() - z.t0) / 1000;
     if (age < 0) continue;                       // queued behind an earlier zip
@@ -3416,7 +3648,7 @@ requestAnimationFrame(frame);
 // ---------- debug hooks (used by automated tests; harmless in play) ----------
 window.GG = {
   game, simulate, solve, genSystem, difficulty, previewT, straightShotWins,
-  SCORE, PT, escapeGate, endRun, loadSystem, sysName,
+  SCORE, PT, INSERT, pathMetrics, measureRemainder, escapeGate, endRun, loadSystem, sysName,
   fling: (vx, vy) => fling(vx, vy),
   flingSolution: () => { const s = game.sys.sol; fling(s.vx, s.vy); return s; },
   newRun,
