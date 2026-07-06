@@ -6,7 +6,10 @@
 const TAG_RE = /^[A-Z0-9]{3}$/;
 const DAY_RE = /^\d{8}$/;
 const MAX_ENTRIES = 500;
-const KEEP_DAYS = 60;
+// History policy (Mike, 2026-07-06): each day is a NEW board — GET only ever
+// serves TODAY, no public access to past days. Past boards are retained in KV
+// indefinitely (no TTL) as a private archive; read them with:
+//   npx wrangler kv key get "d:YYYYMMDD" --namespace-id 7b00460f13754478a0591768c9c64a84 --remote
 
 const CORS = {
   'Access-Control-Allow-Origin': '*',            // dev builds run off the mini; scores are public
@@ -30,8 +33,7 @@ async function daily(req, env, url) {
   if (req.method === 'OPTIONS') return new Response(null, { status: 204, headers: CORS });
 
   if (req.method === 'GET') {
-    const day = url.searchParams.get('day') || utcDay();
-    if (!DAY_RE.test(day)) return json({ error: 'bad day' }, 400);
+    const day = utcDay();                        // today only — history is private
     const board = (await env.GA_DAILY.get('d:' + day, 'json')) || [];
     return json({ day, count: board.length, top: board.slice(0, 20) });
   }
@@ -55,7 +57,7 @@ async function daily(req, env, url) {
     else board.push({ tag, score, t: Date.now() });
     board.sort((a, z) => z.score - a.score || a.t - z.t);
     if (board.length > MAX_ENTRIES) board.length = MAX_ENTRIES;
-    await env.GA_DAILY.put(key, JSON.stringify(board), { expirationTtl: KEEP_DAYS * 86400 });
+    await env.GA_DAILY.put(key, JSON.stringify(board));   // no TTL: private archive keeps every day
 
     const rank = board.findIndex(e => e.tag === tag) + 1;
     return json({ day, rank: rank || null, count: board.length, top: board.slice(0, 20) });
