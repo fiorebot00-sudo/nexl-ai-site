@@ -1118,7 +1118,18 @@ function fling(vx, vy) {
   sfx.launch();
 }
 
-function endRun(byCrash, x, y) {
+function endRun(byCrash, x, y, crashPi) {
+  // D-adr-048 (Mike): a slingshot you then crash INTO is no slingshot — its
+  // reward comet dies with you (it would otherwise bank on the death screen).
+  // Grazes banked already, or around OTHER planets, still land (D-adr-021 intact).
+  if (byCrash && crashPi >= 0) {
+    for (let zi = game.zips.length - 1; zi >= 0; zi--) {
+      if (game.zips[zi].pi === crashPi) {
+        game.zips.splice(zi, 1);
+        game.floats.push({ x, y: y - 20, txt: 'ASSIST VOID', vy: -18, life: 0.9, size: 12, color: '#8fa2c8' });
+      }
+    }
+  }
   game.state = 'dead';
   game.lives--;                       // a ship is lost; retry same system if any remain
   game.escapeStreak = 0;              // losing a ship breaks the perfect-run streak (D-adr-025)
@@ -1362,7 +1373,7 @@ function tick(dt) {
       const p = L.planets[i];
       const dx = c.x - p.x, dy = c.y - p.y;
       const d2 = dx * dx + dy * dy;
-      if (d2 < (p.r + CRAFT_R - 1) ** 2) { endRun(true, c.x, c.y); return; }
+      if (d2 < (p.r + CRAFT_R - 1) ** 2) { endRun(true, c.x, c.y, i); return; }
       if (!game.grazed[i] && d2 < (p.r + ASSIST_MARGIN) ** 2) {
         game.grazed[i] = true;
         game.grazesThisFlight++;
@@ -1378,7 +1389,7 @@ function tick(dt) {
         game.zipCount = (game.zipCount || 0) + 1;
         game.zips.push({ x0: c.x, y0: c.y, t0: zt0, hold: 0.30, dur: 0.62,
                          bend: (game.zipCount % 2 ? 1 : -1) * 110, seed: game.zipCount * 7,
-                         val });
+                         val, pi: i });   // pi: crashing into THIS planet voids the reward (D-adr-048)
         game.floats.push({ x: p.x, y: p.y - p.r - 12,
           txt: '+' + (val * PT) + (n > 1 ? '  ×' + n : ''),
           vy: -26, life: 0.8, size: 14, color: '#ffd166' });
@@ -3815,7 +3826,7 @@ function draw() {
     // the objectives list (D-adr-047) borrows the extra height instead
     const splashObj = OBJ.ON && !STATION_ON && game.mode !== 'daily';
     if (STATION_ON) panelBox(VW / 2, VH * 0.5, VW - 48, VH * 0.62, fadeIn);
-    else if (splashObj) panelBox(VW / 2, VH * 0.335, VW - 48, VH * 0.47, fadeIn);
+    else if (splashObj) panelBox(VW / 2, VH * 0.35, VW - 48, VH * 0.51, fadeIn);
     else panelBox(VW / 2, VH * 0.30, VW - 48, VH * 0.34, fadeIn);
     ctx.globalAlpha = fadeIn;
     ctx.textAlign = 'center';
@@ -3840,24 +3851,24 @@ function draw() {
     if (splashObj) {
       const ogi2 = GALAXIES.indexOf(galaxy);
       const nOff = objOffered();
-      let oy = VH * 0.26 + 100;
+      let oy = VH * 0.26 + 102;
       ctx.textAlign = 'left';
       for (let i = 0; i < nOff; i++) {
         const o = OBJECTIVES[ogi2][i];
         const done = (objMask[ogi2] >> i) & 1;
         const star = OBJ.SPOTLIGHT && objSpotlight(ogi2) === i ? '★ ' : '';
-        ctx.font = '700 12px Oxanium, -apple-system, sans-serif';
+        ctx.font = '700 16px Oxanium, -apple-system, sans-serif';
         ctx.fillStyle = done ? '#ffd166' : '#e8f0ff';
-        ctx.fillText((done ? '✔ ' : '○ ') + star + o.n, 52, oy);
-        ctx.font = '600 10px Oxanium, -apple-system, sans-serif';
+        ctx.fillText((done ? '✔ ' : '○ ') + star + o.n, 48, oy);
+        ctx.font = '600 13px Oxanium, -apple-system, sans-serif';
         ctx.fillStyle = '#8fa2c8';
-        ctx.fillText(o.d, 76, oy + 15);
-        oy += 36;
+        ctx.fillText(o.d, 76, oy + 19);
+        oy += 46;
       }
       ctx.textAlign = 'center';
-      ctx.font = '600 10px Oxanium, -apple-system, sans-serif';
+      ctx.font = '600 12px Oxanium, -apple-system, sans-serif';
       ctx.fillStyle = galaxyDone(ogi2) ? '#ffd166' : '#8fa2c8';
-      ctx.fillText((galaxyDone(ogi2) ? 'GALAXY COMPLETE · ' : '') + 'GALAXIES ' + galaxiesDone() + '/11', VW / 2, oy + 6);
+      ctx.fillText((galaxyDone(ogi2) ? 'GALAXY COMPLETE · ' : '') + 'GALAXIES ' + galaxiesDone() + '/11', VW / 2, oy + 8);
     }
     // the station so far (hidden while STATION_ON=false)
     if (STATION_ON) {
@@ -3883,7 +3894,7 @@ function draw() {
       ctx.globalAlpha = fadeIn * (0.5 + 0.3 * Math.sin(now * 4));
       ctx.fillStyle = '#e8f0ff';
       ctx.font = '600 14px Oxanium, -apple-system, sans-serif';
-      ctx.fillText('tap to continue', VW / 2, STATION_ON ? VH * 0.78 : (splashObj ? VH * 0.60 : VH * 0.44));
+      ctx.fillText('tap to continue', VW / 2, STATION_ON ? VH * 0.78 : (splashObj ? VH * 0.645 : VH * 0.44));
     }
     ctx.globalAlpha = 1;
   }
