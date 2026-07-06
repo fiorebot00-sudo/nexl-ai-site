@@ -1,11 +1,17 @@
 {
-  // deploy config for nexl-ai-site (Workers static assets).
+  // deploy config for nexl-ai-site (Workers static assets + gravity daily API).
   // Manual deploy: CLOUDFLARE_API_TOKEN=... npx wrangler deploy
   // NB (2026-07-03): git push ALSO auto-deploys the committed tree ~20-30s later
   // (Workers Builds came back). Commit+push everything you deploy, or the next
   // push will silently revert your manual deploy.
+  // worker.js serves /api/gravity/daily (KV GA_DAILY); all other paths fall
+  // through to static assets via the ASSETS binding.
   "name": "nexl-ai-site",
   "compatibility_date": "2026-04-27",
   "compatibility_flags": ["nodejs_compat"],
-  "assets": { "directory": "." }
+  "main": "worker.js",
+  "assets": { "directory": ".", "binding": "ASSETS" },
+  "kv_namespaces": [
+    { "binding": "GA_DAILY", "id": "7b00460f13754478a0591768c9c64a84" }
+  ]
 }

@@ -58,6 +58,23 @@ const INSERT = {
   EFF: 1.06,        // path-length / chord ceiling ("nearly straight")
   DEV_FRAC: 0.05,   // chord fraction for the drift bound: max(gate.r, DEV_FRAC·chord)
 };
+// TODAY'S SYSTEM (D-adr-046): one date-seeded system, identical for every player
+// worldwide, 3 ships, tracked entirely apart from the career/HIGH. An escaped
+// result posts to the daily board (Cloudflare Worker + KV in the nexl-ai-site
+// repo, /api/gravity/daily) under a 3-char arcade tag; best-per-tag, UTC days.
+// Depth 3-7 derives from the date hash so difficulty varies day to day.
+const DAILY = (() => {
+  const d = new Date();
+  const day = String(d.getUTCFullYear()) + String(d.getUTCMonth() + 1).padStart(2, '0') + String(d.getUTCDate()).padStart(2, '0');
+  let h = 2166136261 >>> 0;
+  for (let i = 0; i < day.length; i++) { h ^= day.charCodeAt(i); h = Math.imul(h, 16777619) >>> 0; }
+  return { day, seed: h >>> 0, depth: 3 + (h % 5) };
+})();
+// the zone (nexl-ai.net) serves the API same-origin; dev builds off the mini go
+// via workers.dev, which bypasses the zone's managed challenge
+const DAILY_API = (location.hostname === 'nexl-ai.net' ? '' : 'https://nexl-ai-site.fiorebot00.workers.dev') + '/api/gravity/daily';
+const DAILY_LIVES = 3;
+const TAG_CHARS = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789';
 const START_LIVES = 6;            // ships at the start of a run (D-adr-028)
 const MAX_LIVES = 10;             // hangar ceiling (D-adr-040); +1 ship per new galaxy, and +1 per SATS_PER_LIFE sats
 const SATS_PER_LIFE = 4;          // banked satellites to earn a ship (D-adr-040)
@@ -708,7 +725,7 @@ try { best = parseInt(localStorage.getItem('gg_best') || '0', 10) || 0; } catch 
 try { career = parseInt(localStorage.getItem('gg_career') || '0', 10) || 0; } catch (e) {}
 
 function addCareer(n) {
-  if (PLAYGROUND) return;            // sandbox flights never bank to the station
+  if (PLAYGROUND || game.mode === 'daily') return;   // sandbox/daily never bank to the station
   const before = partsUnlocked(career);
   career += n;
   try { localStorage.setItem('gg_career', String(career)); } catch (e) {}
@@ -721,7 +738,7 @@ function addCareer(n) {
 }
 
 function saveBest() {
-  if (PLAYGROUND) return false;      // sandbox flights never touch the record
+  if (PLAYGROUND || game.mode === 'daily') return false;  // sandbox/daily never touch the record
   if (game.score > best) {
     best = game.score;
     try { localStorage.setItem('gg_best', String(best)); } catch (e) {}
@@ -731,7 +748,8 @@ function saveBest() {
 }
 
 const game = {
-  state: 'aim',        // aim | flight | dead | win
+  state: 'aim',        // aim | flight | dead | win | intro | splash | dailyEnd
+  mode: 'normal',      // normal | daily (TODAY'S SYSTEM, D-adr-046)
   lives: START_LIVES,  // spacecraft per run; a crash costs one, retry same system
   score: 0,            // points (systems cleared x slingshot multiplier)
   dispScore: 0,        // count-up display value trailing score
@@ -827,6 +845,10 @@ function loadSystem(depth) {
   for (let i = 0; i < 9; i++)
     game.wormArms.push({ a0: (i / 9) * Math.PI * 2 + wrng() * 0.5, ph: wrng(), lite: i % 3 === 0 });
   game.sysLoadAt = performance.now();
+  // challenger ghost (daily share links): the encoded fling reproduces their
+  // exact flight on this same deterministic course
+  if (game.mode === 'daily' && DAILY_GHOST && !DAILY_GHOST.path)
+    DAILY_GHOST.path = simulate(game.sys.layout, DAILY_GHOST.vx, DAILY_GHOST.vy, MAX_FLIGHT, DAILY_GHOST.t0).path;
   game.orb = { base: 0, at: performance.now() };
   game.ambients = [];
   // galaxy-flavored background specials, up to TWO at once (D-adr-030): naturals
@@ -879,6 +901,88 @@ function newRun() {
   loadSystem(1);
 }
 
+// ---------- TODAY'S SYSTEM (D-adr-046) ----------
+function startDaily() {
+  game.mode = 'daily';
+  game.zips = []; game.lifeZips = []; game.partUnlocked = null;
+  game.ghosts = [];
+  game.lives = DAILY_LIVES;
+  game.score = 0; game.dispScore = 0;
+  game.satsRun = 0; game.escapeStreak = 0; game.deepestSys = DAILY.depth;
+  game.bestChainVal = 0; game.chainThisFlight = 0;
+  game.sysFails = 0; game.bestBeaten = false;
+  game.runSeed = DAILY.seed;               // same course for every player today
+  game.dailyOver = false; game.dailySubmitted = false; game.dailyBoard = null;
+  loadSystem(DAILY.depth);
+}
+function exitDaily() {
+  game.mode = 'normal';
+  if (/[?#&]daily/.test(location.href)) {
+    try { history.replaceState(null, '', location.pathname); } catch (e) {}
+  }
+  newRun();
+}
+function finishDaily(escaped) {
+  game.dailyOver = true;
+  game.dailyEscaped = !!escaped;
+  game.dailyResult = escaped ? game.score : 0;
+  game.dailyTries = DAILY_LIVES - game.lives + (escaped ? 1 : 0);
+  // the winning fling reproduces the exact path for a friend's ghost race
+  game.dailyShot = escaped && game.lastShot ? { vx: game.lastShot.vx, vy: game.lastShot.vy, t0: game.craft.t0 } : null;
+  game.state = 'dailyEnd';
+  game.dailyEndAt = performance.now();
+  const tag = (localStorage.getItem('gg_tag') || '');
+  game.dailyTag = (TAG_RE_OK(tag) ? tag : 'AAA').split('');
+  if (escaped && TAG_RE_OK(tag)) submitDaily();   // returning player: post silently
+  else fetchDailyBoard();
+}
+function TAG_RE_OK(t) { return /^[A-Z0-9]{3}$/.test(t); }
+function fetchDailyBoard() {
+  game.dailyBoard = null;
+  fetch(DAILY_API + '?day=' + DAILY.day)
+    .then(r => r.json()).then(b => { game.dailyBoard = b; })
+    .catch(() => { game.dailyBoard = { error: true }; });
+}
+function submitDaily() {
+  const tag = game.dailyTag.join('');
+  try { localStorage.setItem('gg_tag', tag); } catch (e) {}
+  game.dailySubmitted = true;
+  game.dailyBoard = null;
+  fetch(DAILY_API, { method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ day: DAILY.day, tag, score: Math.round(game.dailyResult * PT) }) })
+    .then(r => r.json()).then(b => { game.dailyBoard = b; sfx.bank(2); })
+    .catch(() => { game.dailyBoard = { error: true }; });
+}
+function shareDaily() {
+  const s = game.dailyShot;
+  let enc = '';
+  if (s) {
+    try {
+      enc = btoa(JSON.stringify([+s.vx.toFixed(2), +s.vy.toFixed(2), +s.t0.toFixed(4),
+                                 Math.round(game.dailyResult * PT), game.dailyTag.join('')]))
+              .replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
+    } catch (e) {}
+  }
+  const url = 'https://nexl-ai.net/gravity-assist/?daily' + (enc ? '&g=' + enc : '');
+  const text = "GRAVITY ASSIST — TODAY'S SYSTEM: " + Math.round(game.dailyResult * PT) + ' pts. Race my ghost:';
+  if (navigator.share) navigator.share({ text, url }).catch(() => {});
+  else if (navigator.clipboard) {
+    navigator.clipboard.writeText(text + ' ' + url).catch(() => {});
+    game.floats.push({ x: VW / 2, y: VH * 0.62, txt: 'LINK COPIED', vy: -16, life: 1.2, size: 16, color: '#7ef0ff' });
+  }
+}
+// an incoming challenge: ?daily&g=<b64url [vx,vy,t0,scorePts,tag]>
+const DAILY_GHOST = (() => {
+  const m = location.href.match(/[?&#]g=([A-Za-z0-9_-]+)/);
+  if (!m) return null;
+  try {
+    const a = JSON.parse(atob(m[1].replace(/-/g, '+').replace(/_/g, '/')));
+    if (!Number.isFinite(a[0]) || !Number.isFinite(a[1])) return null;
+    return { vx: +a[0], vy: +a[1], t0: +a[2] || 0, score: Math.round(+a[3]) || 0,
+             tag: String(a[4] || 'RIVAL').slice(0, 5), path: null };
+  } catch (e) { return null; }
+})();
+
 function dragVelocity(d) {
   const dpr = Math.min(window.devicePixelRatio || 1, 3);
   const dx = (d.sx - d.cx) / (scale / dpr), dy = (d.sy - d.cy) / (scale / dpr);
@@ -930,9 +1034,11 @@ function endRun(byCrash, x, y) {
   const g = game.sys.layout.gate;
   const nearMiss = game.minGateDist < g.r + 80;
   game.deadMsg = nearMiss ? 'SO CLOSE' : (byCrash ? 'CRASHED' : 'LOST IN SPACE');
-  if (game.lives <= 0) {
+  if (game.lives <= 0 && game.mode !== 'daily') {
     // run over: reveal the proof. Every system is verified solvable (D-adr-006),
     // so show it — the winning trajectory, its telemetry, and a demo flight home.
+    // (NOT in the daily: everyone plays the same course all day, and the reveal
+    // would hand the board a copyable answer.)
     const s = game.sys.sol;
     game.solDemo = { vx: s.vx, vy: s.vy, at: performance.now(),
                      path: simulate(game.sys.layout, s.vx, s.vy, 6).path };
@@ -1060,20 +1166,49 @@ function escapeGate() {
 }
 
 // ---------- input ----------
+// pointer position in game space (scale/ox/oy are device-pixel based)
+function toGame(e) {
+  const dpr = Math.min(window.devicePixelRatio || 1, 3);
+  return [(e.clientX * dpr - ox) / scale, (e.clientY * dpr - oy) / scale];
+}
+const inRect = (p, r) => p[0] >= r.x && p[0] <= r.x + r.w && p[1] >= r.y && p[1] <= r.y + r.h;
+// daily-end tap targets (fixed layout; drawn in the dailyEnd panel)
+const DUI = {
+  tag: [0, 1, 2].map(i => ({ x: VW / 2 - 62 + i * 44, y: 300, w: 36, h: 44 })),
+  submit: { x: VW / 2 - 80, y: 362, w: 160, h: 40 },
+  share: { x: VW / 2 - 170, y: 606, w: 104, h: 42 },
+  again: { x: VW / 2 - 52, y: 606, w: 104, h: 42 },
+  exit: { x: VW / 2 + 66, y: 606, w: 104, h: 42 },
+  introDaily: { x: VW / 2 - 130, y: 706, w: 260, h: 44 },
+};
 canvas.addEventListener('pointerdown', e => {
   e.preventDefault();
   audio();                                    // unlock iOS audio on first gesture
   if (game.state === 'intro') {
+    if (inRect(toGame(e), DUI.introDaily)) { startDaily(); return; }
     game.state = 'aim';                       // dismiss the how-to-play, start flinging
   } else if (game.state === 'aim') {
     game.drag = { sx: e.clientX, sy: e.clientY, cx: e.clientX, cy: e.clientY };
   } else if (game.state === 'splash' && performance.now() - game.splashAt > 300) {
     game.state = 'aim';
+  } else if (game.state === 'dailyEnd' && performance.now() - game.dailyEndAt > 350) {
+    const p = toGame(e);
+    if (game.dailyEscaped && !game.dailySubmitted) {
+      for (let i = 0; i < 3; i++) if (inRect(p, DUI.tag[i])) {
+        game.dailyTag[i] = TAG_CHARS[(TAG_CHARS.indexOf(game.dailyTag[i]) + 1) % TAG_CHARS.length];
+        sfx.assist(i); return;
+      }
+      if (inRect(p, DUI.submit)) { submitDaily(); return; }
+    }
+    if (game.dailyEscaped && inRect(p, DUI.share)) { shareDaily(); return; }
+    if (inRect(p, DUI.again)) { startDaily(); return; }
+    if (inRect(p, DUI.exit)) { exitDaily(); return; }
   } else if (game.state === 'dead' && performance.now() - game.deadAt > 350) {
     // 350ms guard: a panic-tap from gameplay shouldn't skip the score.
     // Ships left -> retry the same system (ghost shows your last path);
-    // hangar empty -> full new run.
+    // hangar empty -> full new run (daily: the day's result panel).
     if (game.lives > 0) loadSystem(game.depth);
+    else if (game.mode === 'daily') finishDaily(false);
     else newRun();
   }
 });
@@ -1162,7 +1297,8 @@ function tick(dt) {
         addCareer(SCORE.SAT);
         game.scorePunchAt = performance.now();
         // every SATS_PER_LIFE banked sats earns a ship, up to the hangar cap (D-adr-040)
-        const earnedLife = game.satsRun % SATS_PER_LIFE === 0 && game.lives < MAX_LIVES;
+        // (not in the daily — its 3 ships are the whole contest)
+        const earnedLife = game.mode !== 'daily' && game.satsRun % SATS_PER_LIFE === 0 && game.lives < MAX_LIVES;
         if (earnedLife) {
           game.lives++;
           game.floats.push({ x: sx, y: sy - 12, txt: '+' + PT + ' SAT', vy: -26, life: 0.9, size: 15, color: '#ffd166' });
@@ -1227,6 +1363,7 @@ function tick(dt) {
   const winCap = game.insertThread ? 2500 : 1400;
   if (game.state === 'win' &&
       ((game.winDone && performance.now() - game.winAt > winHold) || performance.now() - game.winAt > winCap)) {
+    if (game.mode === 'daily') { finishDaily(true); return; }   // one system IS the daily
     game.flash = 1;                       // the flash is now *emerging* into the new system
     const prevGalaxy = galaxyFor(game.depth);
     loadSystem(game.depth + 1);
@@ -2923,6 +3060,21 @@ function draw() {
   }
   ctx.globalAlpha = 1;
 
+  // challenger ghost (daily share link): their exact flight in reward gold, with
+  // the tag + score to beat pinned under the scoreboard
+  if (game.mode === 'daily' && DAILY_GHOST && DAILY_GHOST.path && game.state !== 'dailyEnd') {
+    const gp = DAILY_GHOST.path, gn = gp.length / 2;
+    ctx.fillStyle = '#ffd166';
+    ctx.globalAlpha = 0.22;
+    for (let i = 0; i < gn; i += 8) {
+      ctx.beginPath(); ctx.arc(gp[i * 2], gp[i * 2 + 1], 2, 0, 7); ctx.fill();
+    }
+    ctx.globalAlpha = 0.85;
+    ctx.textAlign = 'center';
+    ctx.font = '700 11px Oxanium, -apple-system, sans-serif';
+    ctx.fillText('RACING ' + DAILY_GHOST.tag + (DAILY_GHOST.score ? ' · ' + DAILY_GHOST.score : ''), VW / 2, 63);
+    ctx.globalAlpha = 1;
+  }
   // ghosts of every failed flight on THIS layout — the run's accumulated lessons
   const hereGhosts = game.ghosts.filter(g2 => g2.seed === game.runSeed && g2.depth === game.depth);
   ctx.fillStyle = '#cfe0ff';
@@ -3127,8 +3279,9 @@ function draw() {
   ctx.fillText(String(Math.round(game.dispScore * PT)), 0, 0);
   ctx.restore();
   // persistent all-time HIGH score (localStorage gg_best), always on beside SCORE
-  // (D-adr-037): gold "NEW HIGH!" the moment this run overtakes it
-  if (!PLAYGROUND) {
+  // (D-adr-037): gold "NEW HIGH!" the moment this run overtakes it. The daily is
+  // its own economy — no HIGH readout there.
+  if (!PLAYGROUND && game.mode !== 'daily') {
     const hiBeat = game.bestBeaten;
     ctx.textAlign = 'right';
     ctx.font = '600 9px Oxanium, -apple-system, sans-serif';
@@ -3167,6 +3320,11 @@ function draw() {
     ctx.fillText('PLAYGROUND', VW - 18, 13);
     ctx.font = '800 15px Oxanium, -apple-system, sans-serif'; ctx.fillStyle = '#e8f0ff';
     ctx.fillText('SANDBOX', VW - 18, 32);
+  } else if (game.mode === 'daily') {
+    ctx.font = '700 9px Oxanium, -apple-system, sans-serif'; ctx.fillStyle = '#ffd166';
+    ctx.fillText("TODAY'S SYSTEM", VW - 18, 14);
+    ctx.font = '800 15px Oxanium, -apple-system, sans-serif'; ctx.fillStyle = '#e8f0ff';
+    ctx.fillText(sysName(game.depth).system.toUpperCase(), VW - 18, 33);
   } else {
     const nm = sysName(game.depth);
     ctx.font = '700 9px Oxanium, -apple-system, sans-serif'; ctx.fillStyle = '#8fa2c8';
@@ -3176,7 +3334,7 @@ function draw() {
   }
   // (zips draw in the final overlay pass)
   // best-chase bar: cyan filling toward gold — same language as the aim ramp
-  if (!PLAYGROUND) {
+  if (!PLAYGROUND && game.mode !== 'daily') {
     const target = best > 0 ? best : 5;
     ctx.fillStyle = 'rgba(143,162,200,0.18)';
     ctx.fillRect(0, 46, VW, 2.5);
@@ -3204,7 +3362,7 @@ function draw() {
   // tuned to fire on decent runs (D-adr-026, RESEARCH-SCORING §1.6). Replaces the
   // per-system tip while it's up (a live record chase beats a static hint).
   game.chaseChipShown = false;
-  if (!PLAYGROUND && best > 0 && !game.bestBeaten && game.score >= 0.7 * best
+  if (!PLAYGROUND && game.mode !== 'daily' && best > 0 && !game.bestBeaten && game.score >= 0.7 * best
       && game.score < best && (game.state === 'aim' || game.state === 'flight')) {
     const delta = (best - game.score) * PT;
     const near = (best - game.score) <= SCORE.ESCAPE_BASE * game.depth * 3;
@@ -3253,8 +3411,9 @@ function draw() {
     ctx.fillRect(VW / 2 - 40, VH - 20, 80 * Math.min(frac, 1), 4);
   }
 
-  // one tip per system, top of the sky (stable across retries of the system)
-  if (game.state === 'aim' && !game.chaseChipShown) {
+  // one tip per system, top of the sky (stable across retries of the system).
+  // A racing chip owns that line in the daily (D-adr-046) — the chip wins.
+  if (game.state === 'aim' && !game.chaseChipShown && !(game.mode === 'daily' && DAILY_GHOST)) {
     ctx.globalAlpha = 0.55;
     ctx.fillStyle = '#8fa2c8';
     ctx.font = '600 12px Oxanium, -apple-system, sans-serif';
@@ -3354,9 +3513,104 @@ function draw() {
       ctx.globalAlpha = 0.55 + 0.3 * Math.sin(now * 4);
       ctx.fillStyle = '#e8f0ff';
       ctx.font = '600 15px Oxanium, -apple-system, sans-serif';
-      ctx.fillText('tap for new run', VW / 2, VH * 0.72);
+      ctx.fillText(game.mode === 'daily' ? "tap for today's result" : 'tap for new run', VW / 2, VH * 0.72);
       ctx.globalAlpha = 1;
     }
+  }
+
+  // TODAY'S SYSTEM result panel (D-adr-046): result, tag entry, the board, actions
+  if (game.state === 'dailyEnd') {
+    const et = Math.min((performance.now() - game.dailyEndAt) / 300, 1);
+    dimScreen(et);
+    panelBox(VW / 2, VH * 0.47, VW - 40, 560, et);
+    ctx.globalAlpha = et;
+    ctx.textAlign = 'center';
+    const MON = ['JAN', 'FEB', 'MAR', 'APR', 'MAY', 'JUN', 'JUL', 'AUG', 'SEP', 'OCT', 'NOV', 'DEC'];
+    const dayTxt = MON[+DAILY.day.slice(4, 6) - 1] + ' ' + (+DAILY.day.slice(6));
+    ctx.fillStyle = '#ffd166';
+    ctx.font = '700 12px Oxanium, -apple-system, sans-serif';
+    ctx.fillText("TODAY'S SYSTEM", VW / 2, 140);
+    ctx.fillStyle = '#8fa2c8';
+    ctx.font = '600 13px Oxanium, -apple-system, sans-serif';
+    ctx.fillText(dayTxt + ' · ' + sysName(DAILY.depth).system.toUpperCase(), VW / 2, 162);
+    if (game.dailyEscaped) {
+      ctx.fillStyle = '#ffd166';
+      ctx.font = '800 32px Oxanium, -apple-system, sans-serif';
+      ctx.fillText(String(Math.round(game.dailyResult * PT)), VW / 2, 216);
+      ctx.fillStyle = '#8fa2c8';
+      ctx.font = '600 11px Oxanium, -apple-system, sans-serif';
+      ctx.fillText('ESCAPED · SHIPS USED ' + game.dailyTries + '/' + DAILY_LIVES, VW / 2, 238);
+    } else {
+      ctx.fillStyle = '#ff9d8a';
+      ctx.font = '800 22px Oxanium, -apple-system, sans-serif';
+      ctx.fillText('NO ESCAPE TODAY', VW / 2, 212);
+      ctx.fillStyle = '#8fa2c8';
+      ctx.font = '600 11px Oxanium, -apple-system, sans-serif';
+      ctx.fillText('same system all day — try again', VW / 2, 234);
+    }
+    if (game.dailyEscaped && !game.dailySubmitted) {
+      // 3-wheel arcade tag: tap a letter to cycle
+      ctx.fillStyle = '#8fa2c8';
+      ctx.font = '600 10px Oxanium, -apple-system, sans-serif';
+      ctx.fillText('YOUR TAG — TAP TO CYCLE', VW / 2, 290);
+      for (let i = 0; i < 3; i++) {
+        const r = DUI.tag[i];
+        ctx.fillStyle = 'rgba(126,240,255,0.08)';
+        ctx.fillRect(r.x, r.y, r.w, r.h);
+        ctx.strokeStyle = 'rgba(126,240,255,0.6)'; ctx.lineWidth = 1.5;
+        ctx.strokeRect(r.x, r.y, r.w, r.h);
+        ctx.fillStyle = '#e8f0ff';
+        ctx.font = '800 26px Oxanium, -apple-system, sans-serif';
+        ctx.fillText(game.dailyTag[i], r.x + r.w / 2, r.y + 32);
+      }
+      const sb = DUI.submit;
+      ctx.strokeStyle = '#ffd166'; ctx.lineWidth = 2;
+      ctx.strokeRect(sb.x, sb.y, sb.w, sb.h);
+      ctx.fillStyle = '#ffd166';
+      ctx.font = '700 15px Oxanium, -apple-system, sans-serif';
+      ctx.fillText('POST SCORE', VW / 2, sb.y + 26);
+    } else {
+      ctx.fillStyle = '#8fa2c8';
+      ctx.font = '600 10px Oxanium, -apple-system, sans-serif';
+      ctx.fillText("TODAY'S BOARD", VW / 2, 290);
+      const b = game.dailyBoard;
+      if (!b) {
+        ctx.font = '600 12px Oxanium, -apple-system, sans-serif';
+        ctx.fillText('FETCHING…', VW / 2, 330);
+      } else if (b.error) {
+        ctx.font = '600 12px Oxanium, -apple-system, sans-serif';
+        ctx.fillText('BOARD UNREACHABLE — SCORE KEPT LOCALLY', VW / 2, 330);
+      } else {
+        const myTag = game.dailyTag.join('');
+        const rows2 = (b.top || []).slice(0, 8);
+        ctx.font = '700 14px Oxanium, -apple-system, sans-serif';
+        if (!rows2.length) ctx.fillText('NO ESCAPES POSTED YET — BE FIRST', VW / 2, 330);
+        rows2.forEach((r, i) => {
+          const y2 = 316 + i * 22;
+          const mine = game.dailySubmitted && r.tag === myTag;
+          ctx.fillStyle = mine ? '#ffd166' : (i === 0 ? '#e8f0ff' : '#cdd8ee');
+          ctx.textAlign = 'right'; ctx.fillText(String(i + 1), VW / 2 - 70, y2);
+          ctx.textAlign = 'left'; ctx.fillText(r.tag, VW / 2 - 48, y2);
+          ctx.textAlign = 'right'; ctx.fillText(String(r.score), VW / 2 + 90, y2);
+        });
+        ctx.textAlign = 'center';
+        if (game.dailySubmitted && b.rank)
+          ctx.fillStyle = '#ffd166', ctx.font = '700 12px Oxanium, -apple-system, sans-serif',
+          ctx.fillText('YOUR RANK ' + b.rank + ' OF ' + b.count, VW / 2, 316 + rows2.length * 22 + 20);
+      }
+    }
+    // actions
+    const drawBtn = (r, label, color) => {
+      ctx.strokeStyle = color; ctx.lineWidth = 1.5;
+      ctx.strokeRect(r.x, r.y, r.w, r.h);
+      ctx.fillStyle = color;
+      ctx.font = '700 13px Oxanium, -apple-system, sans-serif';
+      ctx.fillText(label, r.x + r.w / 2, r.y + 26);
+    };
+    if (game.dailyEscaped) drawBtn(DUI.share, 'SHARE', '#7ef0ff');
+    drawBtn(DUI.again, 'PLAY AGAIN', '#ffd166');
+    drawBtn(DUI.exit, 'EXIT', '#8fa2c8');
+    ctx.globalAlpha = 1;
   }
 
   // first-run how-to-play: one readable page over a dimmed field, tap to start
@@ -3402,6 +3656,13 @@ function draw() {
     ctx.font = '700 19px Oxanium, -apple-system, sans-serif';
     ctx.fillText('tap to launch', VW / 2, cy + 262);
     ctx.globalAlpha = 1;
+    // TODAY'S SYSTEM entry (D-adr-046): one shared date-seeded system, 3 ships
+    const db = DUI.introDaily;
+    ctx.strokeStyle = '#ffd166'; ctx.lineWidth = 1.5;
+    ctx.strokeRect(db.x, db.y, db.w, db.h);
+    ctx.fillStyle = '#ffd166';
+    ctx.font = '700 15px Oxanium, -apple-system, sans-serif';
+    ctx.fillText("◈  TODAY'S SYSTEM", VW / 2, db.y + 28);
   }
 
   // galaxy-transition splash: name the place, show the station taking shape
@@ -3642,8 +3903,9 @@ function frame(now) {
   requestAnimationFrame(frame);
 }
 
-loadSystem(1);
-game.state = 'intro';                 // one-page how-to-play before the first fling
+// ?daily deep-links straight into TODAY'S SYSTEM (share links carry &g=<ghost>)
+if (/[?#&]daily/.test(location.href)) startDaily();
+else { loadSystem(1); game.state = 'intro'; }   // one-page how-to-play before the first fling
 // warm the game font so the canvas swaps to it within the first frames
 if (document.fonts && document.fonts.load) {
   for (const w of [600, 700, 800]) document.fonts.load(w + ' 30px Oxanium').catch(() => {});
@@ -3653,7 +3915,8 @@ requestAnimationFrame(frame);
 // ---------- debug hooks (used by automated tests; harmless in play) ----------
 window.GG = {
   game, simulate, solve, genSystem, difficulty, previewT, straightShotWins,
-  SCORE, PT, INSERT, pathMetrics, measureRemainder, escapeGate, endRun, loadSystem, sysName,
+  SCORE, PT, INSERT, DAILY, pathMetrics, measureRemainder, escapeGate, endRun, loadSystem, sysName,
+  startDaily, finishDaily, exitDaily,
   fling: (vx, vy) => fling(vx, vy),
   flingSolution: () => { const s = game.sys.sol; fling(s.vx, s.vy); return s; },
   newRun,
