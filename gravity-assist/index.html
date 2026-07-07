@@ -91,11 +91,14 @@ const ASSIST_MARGIN = 26;         // pass within planet r + this = slingshot ass
 // ?fx opt-in as the bloom overlay; the fx meter tap toggles both for A/B.
 const LOOK = {
   on: /[?#&]fx/.test(location.href),
+  rev: 'A2',       // build tag shown on the fx meter — cache check for on-device rounds
+  // review-round defaults: deliberately bold so each dial is judgeable on a
+  // phone, then dialed back to taste. Tuned values become the shipped ones.
   twinkle: 1,      // star brightness oscillation (0-1 of ±15%)
-  tint: 0.3,       // star color pull toward the galaxy's primary hue (0-1)
-  parallax: 1,     // ship-keyed micro-parallax multiplier (0 = off; near layer ~2%)
-  wash: 1,         // galaxy ambient light wash intensity (0-1)
-  vignette: 0.14,  // corner falloff max alpha (0 = off)
+  tint: 0.5,       // star color pull toward the galaxy's primary hue (0-1)
+  parallax: 1.6,   // ship-keyed micro-parallax multiplier (0 = off; 1 = near layer ~2%)
+  wash: 1.7,       // galaxy ambient light wash intensity
+  vignette: 0.2,   // corner falloff max alpha (0 = off)
 };
 
 // ---------- parallax starfield (visual only; drifts down = we fly up) ----------
@@ -4293,7 +4296,7 @@ let fxRender = null;
     }
     if (t0 - lastMeter > 500) {
       lastMeter = t0;
-      meter.textContent = 'FX ' + (FXP.on ? 'ON ' : 'OFF') + '· tap to toggle\n' +
+      meter.textContent = 'FX ' + (FXP.on ? 'ON' : 'OFF') + ' [' + LOOK.rev + '] · tap to toggle\n' +
         fpsE.toFixed(0) + ' fps · upload ' + upE.toFixed(1) + ' ms';
     }
   };
