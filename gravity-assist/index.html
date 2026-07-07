@@ -91,7 +91,7 @@ const ASSIST_MARGIN = 26;         // pass within planet r + this = slingshot ass
 // ?fx opt-in as the bloom overlay; the fx meter tap toggles both for A/B.
 const LOOK = {
   on: /[?#&]fx/.test(location.href),
-  rev: 'A2',       // build tag shown on the fx meter — cache check for on-device rounds
+  rev: 'A3',       // build tag: meter line 3 + quoted in chat after every deploy (Mike's cache check)
   // review-round defaults: deliberately bold so each dial is judgeable on a
   // phone, then dialed back to taste. Tuned values become the shipped ones.
   twinkle: 1,      // star brightness oscillation (0-1 of ±15%)
@@ -4296,8 +4296,9 @@ let fxRender = null;
     }
     if (t0 - lastMeter > 500) {
       lastMeter = t0;
-      meter.textContent = 'FX ' + (FXP.on ? 'ON' : 'OFF') + ' [' + LOOK.rev + '] · tap to toggle\n' +
-        fpsE.toFixed(0) + ' fps · upload ' + upE.toFixed(1) + ' ms';
+      meter.textContent = 'FX ' + (FXP.on ? 'ON' : 'OFF') + ' · tap to toggle\n' +
+        fpsE.toFixed(0) + ' fps · upload ' + upE.toFixed(1) + ' ms\n' +
+        'build ' + LOOK.rev;
     }
   };
 })();
