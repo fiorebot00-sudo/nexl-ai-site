@@ -91,7 +91,7 @@ const ASSIST_MARGIN = 26;         // pass within planet r + this = slingshot ass
 // ?fx opt-in as the bloom overlay; the fx meter tap toggles both for A/B.
 const LOOK = {
   on: /[?#&]fx/.test(location.href),
-  rev: 'C3',       // build tag: meter line 3 + quoted in chat after every deploy (Mike's cache check)
+  rev: 'C4',       // build tag: meter line 3 + quoted in chat after every deploy (Mike's cache check)
   // review-round defaults: deliberately bold so each dial is judgeable on a
   // phone, then dialed back to taste. Tuned values become the shipped ones.
   twinkle: 1,      // star brightness oscillation (0-1 of ±15%)
@@ -100,6 +100,10 @@ const LOOK = {
   wash: 1.7,       // galaxy ambient light wash intensity
   vignette: 0.2,   // corner falloff max alpha (0 = off)
   planetLight: 1,  // planet relight intensity (sunlit lift + atmosphere rim); URL &pl=
+  // DEV CHEAT (evaluation builds): infinite ships under ?fx so Mike can play/tune
+  // without restarting. &inf=0 disables. MUST be stripped/gated before ?fx flips
+  // default-on for real players (D2 decision) — a cheat, not an effect.
+  inf: true,
   // ---------- per-feature toggles (all default ON under ?fx) ----------
   // Every discrete effect is individually switchable so Mike can A/B any one in
   // isolation. URL: &no=launch,crash disables listed features; &only=launch runs
@@ -128,6 +132,7 @@ const LOOK = {
   if (pl) LOOK.planetLight = parseFloat(pl);
   const plv = (location.href.match(/[?&]plv=([a-z]+)/) || [])[1]; // force one relight variant everywhere
   if (plv) LOOK.planetVariant = plv;
+  if (/[?&]inf=0/.test(location.href)) LOOK.inf = false;          // opt out of infinite ships
 })();
 // gate helper: master ?fx on AND this feature enabled
 const fxOn = k => LOOK.on && LOOK.f[k];
@@ -1202,6 +1207,9 @@ function endRun(byCrash, x, y, crashPi) {
   }
   game.state = 'dead';
   game.lives--;                       // a ship is lost; retry same system if any remain
+  // DEV CHEAT: infinite ships under ?fx (LOOK.inf) — the hangar refills so play/tuning
+  // never dead-ends. Streak/fail bookkeeping above stays honest; only survival is free.
+  if (LOOK.on && LOOK.inf && game.mode !== 'daily') game.lives = Math.max(game.lives, START_LIVES);
   game.escapeStreak = 0;              // losing a ship breaks the perfect-run streak (D-adr-025)
   game.sysFails = (game.sysFails || 0) + 1;   // fails on THIS system (drives the hint, D-adr-032)
   if (game.gvisit) game.gvisit.deaths++;      // objective visit counter (D-adr-047)
@@ -3390,8 +3398,9 @@ function draw() {
       const angDeg = (Math.atan2(-tv.vy, tv.vx) * 180 / Math.PI + 360) % 360;
       const thr = Math.round(Math.min((spd - MIN_V) / (MAX_V - MIN_V), 1) * 100);
       ctx.textAlign = 'center';
-      ctx.font = '600 11px Oxanium, -apple-system, sans-serif';
-      ctx.globalAlpha = live ? 0.95 : 0.45;
+      // 15px (was 11) \u2014 Mike: telemetry too small to read on the phone
+      ctx.font = '600 15px Oxanium, -apple-system, sans-serif';
+      ctx.globalAlpha = live ? 0.95 : 0.6;
       ctx.fillStyle = live ? '#7ef0ff' : '#8fa2c8';
       ctx.fillText((live ? '' : 'LAST   ') + '\u2220 ' + angDeg.toFixed(1) + '\u00b0   V ' + Math.round(spd) + '   THR ' + thr + '%', PAD.x, VH - 4);
       ctx.globalAlpha = 1;
@@ -4600,9 +4609,16 @@ let fxRender = null;
     }
     if (t0 - lastMeter > 500) {
       lastMeter = t0;
+      // dev-status detail: live URL-dial settings (Mike's ask) — bloom th/st/kn,
+      // planet relight pl + the variant active in THIS galaxy, any off-flags, ∞ ships
+      const pv = LOOK.planetVariant || PL_BY_GALAXY[GALAXIES.indexOf(galaxyFor(game.depth))] || 'soft';
+      const offs = Object.keys(LOOK.f).filter(k => !LOOK.f[k]);
       meter.textContent = 'FX ' + (FXP.on ? 'ON' : 'OFF') + ' · tap to toggle\n' +
         fpsE.toFixed(0) + ' fps · up ' + upE.toFixed(1) + ' · pk ' + pkMs.toFixed(0) + ' ms\n' +
-        'build ' + LOOK.rev;
+        'build ' + LOOK.rev + (LOOK.inf ? ' · ∞ ships' : '') + '\n' +
+        'th ' + FXP.threshold + ' · st ' + FXP.strength + ' · kn ' + FXP.knee + '\n' +
+        'pl ' + LOOK.planetLight + ' · ' + pv + (LOOK.planetVariant ? ' (forced)' : '') +
+        (offs.length ? '\noff: ' + offs.join(',') : '');
       pkMs = 0;
     }
   };
