@@ -86,6 +86,18 @@ const A_CAP = 2000;               // max acceleration (units/s^2)
 const BOUNDS = { x0: -60, x1: VW + 60, y0: -80, y1: VH + 80 };
 const ASSIST_MARGIN = 26;         // pass within planet r + this = slingshot assist
 
+// ---------- ?fx look dials (Phase 1 depth group, D-adr-049) ----------
+// Presentation only — physics/determinism untouched. LOOK.on rides the same
+// ?fx opt-in as the bloom overlay; the fx meter tap toggles both for A/B.
+const LOOK = {
+  on: /[?#&]fx/.test(location.href),
+  twinkle: 1,      // star brightness oscillation (0-1 of ±15%)
+  tint: 0.3,       // star color pull toward the galaxy's primary hue (0-1)
+  parallax: 1,     // ship-keyed micro-parallax multiplier (0 = off; near layer ~2%)
+  wash: 1,         // galaxy ambient light wash intensity (0-1)
+  vignette: 0.14,  // corner falloff max alpha (0 = off)
+};
+
 // ---------- parallax starfield (visual only; drifts down = we fly up) ----------
 // Luminance discipline (RESEARCH-VISUAL 1.4): background stays below ~35% of
 // ship/goal brightness so stars never compete with play. A few 'hero' stars
@@ -2985,6 +2997,18 @@ function draw() {
   }
   ctx.fillRect(0, 0, canvas.width, canvas.height);
 
+  // A3 galaxy light wash: one soft ground-up ambient glow in the galaxy's own
+  // hue — "the launch site has a light source". Screen space, behind everything.
+  if (LOOK.on && LOOK.wash) {
+    const cw = canvas.width, ch = canvas.height;
+    const wg = ctx.createRadialGradient(cw / 2, ch * 1.08, ch * 0.05, cw / 2, ch * 1.08, ch * 0.85);
+    wg.addColorStop(0, 'rgba(' + galaxy.decor.hues[0] + ',' + (0.10 * LOOK.wash * dim).toFixed(3) + ')');
+    wg.addColorStop(0.55, 'rgba(' + galaxy.decor.hues[0] + ',' + (0.035 * LOOK.wash * dim).toFixed(3) + ')');
+    wg.addColorStop(1, 'rgba(' + galaxy.decor.hues[0] + ',0)');
+    ctx.fillStyle = wg;
+    ctx.fillRect(0, 0, cw, ch);
+  }
+
   let shx = 0, shy = 0;
   if (game.shake > 0) {
     const p = (performance.now() - (game.shakeAt || 0)) / ((game.shakeDur || 0.42) * 1000);
@@ -2997,29 +3021,51 @@ function draw() {
   ctx.setTransform(scale, 0, 0, scale, ox + shx * scale, oy + shy * scale);
 
   const S = game.sys;
-  ctx.fillStyle = '#cfe0ff';
-  ctx.strokeStyle = '#cfe0ff';
+  // A1 star tint: pull the field toward the galaxy's primary hue (LOOK.tint of
+  // the way from the neutral #cfe0ff). Base 207,224,255; hues are 'r,g,b'.
+  let starCol = '#cfe0ff';
+  if (LOOK.on && LOOK.tint) {
+    const h = galaxy.decor.hues[0].split(',');
+    starCol = 'rgb(' + Math.round(207 + (h[0] - 207) * LOOK.tint) + ',' +
+                       Math.round(224 + (h[1] - 224) * LOOK.tint) + ',' +
+                       Math.round(255 + (h[2] - 255) * LOOK.tint) + ')';
+  }
+  ctx.fillStyle = starCol;
+  ctx.strokeStyle = starCol;
   ctx.lineWidth = 1;
+  // A2 ship-keyed micro-parallax: in flight the layers lean fractionally away
+  // from the ship's offset from center — a depth cue, not a camera. Layer
+  // factor scales with drift speed (near layer = strongest, ~2% of offset).
+  let plx = 0, ply = 0;
+  if (LOOK.on && LOOK.parallax && game.state === 'flight' && game.craft) {
+    plx = (game.craft.x - VW / 2) * 0.02 * LOOK.parallax;
+    ply = (game.craft.y - VH / 2) * 0.02 * LOOK.parallax;
+  }
   for (const L of STAR_LAYERS) {
+    const pf = L.speed / 26;   // 26 = fastest layer's speed
     for (let i = 0; i < L.stars.length; i++) {
       const s = L.stars[i];
       // galaxy star tuning: deterministic density thinning + alpha scale (heroes exempt)
       if (!s.hero && (i % 20) >= galaxy.stars.density * 20) continue;
-      const sy = (s.y + now * L.speed) % VH;
-      const sa = s.hero ? s.a : Math.min(s.a * galaxy.stars.alpha * dim, 0.55);
+      const sx = ((s.x - plx * pf) % VW + VW) % VW;
+      const sy = ((s.y + now * L.speed - ply * pf) % VH + VH) % VH;
+      let sa = s.hero ? s.a : Math.min(s.a * galaxy.stars.alpha * dim, 0.55);
+      // A1 twinkle: gentle per-star phase; heroes stay steady (the last lights)
+      if (LOOK.on && LOOK.twinkle && !s.hero)
+        sa *= 1 - 0.15 * LOOK.twinkle * (0.5 + 0.5 * Math.sin(now * 1.8 + i * 2.399 + L.speed));
       // E2: per-galaxy star glyph — plotter squares (Blueprint), infall streaks
       // (the Lens); hero stars stay dots everywhere (the last lights)
       if (galaxy.skyMode === 'squares' && !s.hero) {
         ctx.globalAlpha = sa;
-        ctx.fillRect(s.x, sy, 1.4, 1.4);
+        ctx.fillRect(sx, sy, 1.4, 1.4);
       } else if (galaxy.skyMode === 'streaks' && !s.hero) {
-        const at2 = Math.atan2(-240 - sy, VW / 2 - s.x);
+        const at2 = Math.atan2(-240 - sy, VW / 2 - sx);
         ctx.globalAlpha = sa * 0.8;
-        ctx.beginPath(); ctx.moveTo(s.x, sy);
-        ctx.lineTo(s.x + Math.cos(at2) * 5, sy + Math.sin(at2) * 5); ctx.stroke();
+        ctx.beginPath(); ctx.moveTo(sx, sy);
+        ctx.lineTo(sx + Math.cos(at2) * 5, sy + Math.sin(at2) * 5); ctx.stroke();
       } else {
         ctx.globalAlpha = sa;
-        ctx.beginPath(); ctx.arc(s.x, sy, s.r, 0, 7); ctx.fill();
+        ctx.beginPath(); ctx.arc(sx, sy, s.r, 0, 7); ctx.fill();
       }
     }
   }
@@ -4051,6 +4097,26 @@ function draw() {
     ctx.fillRect(0, 0, canvas.width, canvas.height);
     ctx.globalAlpha = 1;
   }
+
+  // A4 vignette: cached corner falloff, redrawn only on resize. Whole frame —
+  // subtle enough (LOOK.vignette max alpha) to leave the HUD readable.
+  if (LOOK.on && LOOK.vignette > 0) {
+    if (!draw.vig || draw.vig.width !== canvas.width || draw.vig.height !== canvas.height || draw.vigA !== LOOK.vignette) {
+      draw.vig = document.createElement('canvas');
+      draw.vig.width = canvas.width; draw.vig.height = canvas.height;
+      draw.vigA = LOOK.vignette;
+      const vc = draw.vig.getContext('2d');
+      const vr = Math.hypot(canvas.width, canvas.height) / 2;
+      const vg = vc.createRadialGradient(canvas.width / 2, canvas.height / 2, vr * 0.55,
+                                         canvas.width / 2, canvas.height / 2, vr);
+      vg.addColorStop(0, 'rgba(0,0,0,0)');
+      vg.addColorStop(1, 'rgba(0,0,0,' + LOOK.vignette + ')');
+      vc.fillStyle = vg;
+      vc.fillRect(0, 0, canvas.width, canvas.height);
+    }
+    ctx.setTransform(1, 0, 0, 1, 0, 0);
+    ctx.drawImage(draw.vig, 0, 0);
+  }
 }
 
 // ---------- main loop ----------
@@ -4122,7 +4188,7 @@ let fxRender = null;
 
   const FXP = { on: true, strength: 0.85, threshold: 0.45, knee: 0.35, scale: 0.25 };
   window.GG_FX = FXP;
-  meter.addEventListener('pointerdown', e => { e.preventDefault(); FXP.on = !FXP.on; });
+  meter.addEventListener('pointerdown', e => { e.preventDefault(); FXP.on = !FXP.on; LOOK.on = FXP.on; });
 
   const VS = 'attribute vec2 p;varying vec2 v;void main(){v=p*.5+.5;gl_Position=vec4(p,0.,1.);}';
   const FS_BRIGHT = 'precision mediump float;varying vec2 v;uniform sampler2D t;uniform float th,kn;' +
@@ -4244,6 +4310,7 @@ window.GG = {
   newRun,
 };
 if (window.GG_FX) window.GG.FX = window.GG_FX;   // ?fx bloom dials (on/strength/threshold/knee/scale)
+window.GG.LOOK = LOOK;                           // ?fx depth-group dials (twinkle/tint/parallax/wash/vignette)
 </script>
 </body>
 </html>
