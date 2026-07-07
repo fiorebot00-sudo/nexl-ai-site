@@ -91,7 +91,7 @@ const ASSIST_MARGIN = 26;         // pass within planet r + this = slingshot ass
 // ?fx opt-in as the bloom overlay; the fx meter tap toggles both for A/B.
 const LOOK = {
   on: /[?#&]fx/.test(location.href),
-  rev: 'C4',       // build tag: meter line 3 + quoted in chat after every deploy (Mike's cache check)
+  rev: 'C5',       // build tag: meter line 3 + quoted in chat after every deploy (Mike's cache check)
   // review-round defaults: deliberately bold so each dial is judgeable on a
   // phone, then dialed back to taste. Tuned values become the shipped ones.
   twinkle: 1,      // star brightness oscillation (0-1 of ±15%)
@@ -100,6 +100,8 @@ const LOOK = {
   wash: 1.7,       // galaxy ambient light wash intensity
   vignette: 0.2,   // corner falloff max alpha (0 = off)
   planetLight: 1,  // planet relight intensity (sunlit lift + atmosphere rim); URL &pl=
+  shipScale: 1.15, // visual-only ship size multiplier (collision unchanged); URL &ss=
+  plume: 1.6,      // launch plume magnitude (count/size/speed/kiss all scale); URL &lp=
   // DEV CHEAT (evaluation builds): infinite ships under ?fx so Mike can play/tune
   // without restarting. &inf=0 disables. MUST be stripped/gated before ?fx flips
   // default-on for real players (D2 decision) — a cheat, not an effect.
@@ -133,6 +135,10 @@ const LOOK = {
   const plv = (location.href.match(/[?&]plv=([a-z]+)/) || [])[1]; // force one relight variant everywhere
   if (plv) LOOK.planetVariant = plv;
   if (/[?&]inf=0/.test(location.href)) LOOK.inf = false;          // opt out of infinite ships
+  const ss = (location.href.match(/[?&]ss=([\d.]+)/) || [])[1];   // ship visual scale
+  if (ss) LOOK.shipScale = parseFloat(ss);
+  const lp = (location.href.match(/[?&]lp=([\d.]+)/) || [])[1];   // launch plume magnitude
+  if (lp) LOOK.plume = parseFloat(lp);
 })();
 // gate helper: master ?fx on AND this feature enabled
 const fxOn = k => LOOK.on && LOOK.f[k];
@@ -1176,17 +1182,19 @@ function fling(vx, vy) {
     const sp0 = Math.hypot(vx, vy) || 1;
     const bx = -vx / sp0, by = -vy / sp0;             // unit vector AWAY from flight
     const pw = 0.4 + 0.6 * game.previewPower;         // harder fling → bigger plume
-    for (let i = 0; i < 16; i++) {
-      const spread = (Math.random() - 0.5) * 1.1;     // fan the plume ±~30°
+    const pm = LOOK.plume || 1;                       // plume magnitude dial (&lp=)
+    const nP = Math.round(16 * Math.min(pm, 2));      // more chunks, capped 2x
+    for (let i = 0; i < nP; i++) {
+      const spread = (Math.random() - 0.5) * 1.25;    // fan the plume ±~36°
       const dx = bx * Math.cos(spread) - by * Math.sin(spread);
       const dy = bx * Math.sin(spread) + by * Math.cos(spread);
-      const sp = (80 + Math.random() * 200) * pw;
+      const sp = (80 + Math.random() * 220) * pw * (0.7 + 0.3 * pm);
       game.particles.push({
         x: PAD.x + dx * 6, y: PAD.y - 11 + dy * 6,
         vx: dx * sp, vy: dy * sp,
-        life: 0.28 + Math.random() * 0.22, max: 0.5,
-        r: 1.6 + Math.random() * 2.4,
-        col: Math.random() < 0.5 ? '#bfe8ff' : '#ffffff', add: true, a0: 0.8,
+        life: (0.3 + Math.random() * 0.25) * (0.8 + 0.2 * pm), max: 0.55 * (0.8 + 0.2 * pm),
+        r: (1.6 + Math.random() * 2.4) * pm,
+        col: Math.random() < 0.4 ? '#bfe8ff' : (Math.random() < 0.5 ? '#ffffff' : '#ffe6c8'), add: true, a0: 0.85,
       });
     }
   }
@@ -2502,6 +2510,9 @@ function drawAmbientOne(a, now) {
 function drawShip(x, y, ang, thrust, now, squash, gold) {
   ctx.save();
   ctx.translate(x, y); ctx.rotate(ang);
+  // visual-only ship scale (Mike: slightly bigger so flame/effect tuning reads on a
+  // phone; collision physics untouched — the craft is still a point + planet radius)
+  if (LOOK.on && LOOK.shipScale !== 1) ctx.scale(LOOK.shipScale, LOOK.shipScale);
   if (squash) ctx.scale(1 - squash, 1 + squash);  // loaded-spring anticipation on drag
   if (thrust) {
     const len = 11 + Math.sin(now * 43) * 2 + Math.random() * 3;
@@ -3581,7 +3592,7 @@ function draw() {
       if (kp < 1) {
         ctx.save();
         ctx.globalCompositeOperation = 'lighter';
-        const kr = 26 * (0.4 + kp * 0.6);
+        const kr = 26 * (0.6 + 0.4 * (LOOK.plume || 1)) * (0.4 + kp * 0.6);   // kiss grows with the plume dial
         const kg = ctx.createRadialGradient(PAD.x, PAD.y - 8, 0, PAD.x, PAD.y - 8, kr);
         kg.addColorStop(0, 'rgba(255,255,255,' + (0.55 * (1 - kp)).toFixed(3) + ')');
         kg.addColorStop(0.4, 'rgba(150,224,255,' + (0.35 * (1 - kp)).toFixed(3) + ')');
@@ -4617,7 +4628,8 @@ let fxRender = null;
         fpsE.toFixed(0) + ' fps · up ' + upE.toFixed(1) + ' · pk ' + pkMs.toFixed(0) + ' ms\n' +
         'build ' + LOOK.rev + (LOOK.inf ? ' · ∞ ships' : '') + '\n' +
         'th ' + FXP.threshold + ' · st ' + FXP.strength + ' · kn ' + FXP.knee + '\n' +
-        'pl ' + LOOK.planetLight + ' · ' + pv + (LOOK.planetVariant ? ' (forced)' : '') +
+        'pl ' + LOOK.planetLight + ' · ' + pv + (LOOK.planetVariant ? ' (forced)' : '') + '\n' +
+        'ship ' + LOOK.shipScale + ' · plume ' + LOOK.plume +
         (offs.length ? '\noff: ' + offs.join(',') : '');
       pkMs = 0;
     }
