@@ -4078,6 +4078,7 @@ function frame(now) {
   acc += ft;
   while (acc >= DT) { tick(DT); acc -= DT; }
   draw();
+  if (fxRender) fxRender();
   requestAnimationFrame(frame);
 }
 
@@ -4090,6 +4091,144 @@ if (document.fonts && document.fonts.load) {
 }
 requestAnimationFrame(frame);
 
+// ---------- ?fx spike: WebGL bloom post-FX over the untouched 2D frame ----------
+// The 2D canvas keeps rendering exactly as shipped. With ?fx in the URL, each
+// finished frame is uploaded to a WebGL1 overlay and run through a bloom chain
+// (bright-pass -> separable gaussian at quarter res -> additive composite).
+// The overlay is pointer-events:none so input still lands on the game canvas.
+// Any init failure removes the overlay: fallback is the vanilla game.
+// Meter (top-left) shows fps + per-frame upload cost; TAP IT to A/B toggle.
+let fxRender = null;
+(function initFX() {
+  if (!/[?#&]fx/.test(location.href)) return;
+  const meter = document.createElement('div');
+  meter.style.cssText = 'position:fixed;top:64px;left:8px;z-index:9;font:11px ui-monospace,monospace;color:#8ef5ff;background:rgba(4,8,16,.6);padding:4px 8px;border-radius:5px;white-space:pre;user-select:none;-webkit-user-select:none';
+  meter.textContent = 'FX: init…';
+  document.body.appendChild(meter);
+  let gl, glc;
+  try {
+    glc = document.createElement('canvas');
+    glc.style.cssText = 'position:fixed;left:0;top:0;pointer-events:none;z-index:5';
+    gl = glc.getContext('webgl', { alpha: false, antialias: false, depth: false, stencil: false, powerPreference: 'high-performance' });
+  } catch (e) { gl = null; }
+  if (!gl) { meter.textContent = 'FX: WebGL unavailable — vanilla'; return; }
+  document.body.appendChild(glc);
+
+  const FXP = { on: true, strength: 0.85, threshold: 0.45, knee: 0.35, scale: 0.25 };
+  window.GG_FX = FXP;
+  meter.addEventListener('pointerdown', e => { e.preventDefault(); FXP.on = !FXP.on; });
+
+  const VS = 'attribute vec2 p;varying vec2 v;void main(){v=p*.5+.5;gl_Position=vec4(p,0.,1.);}';
+  const FS_BRIGHT = 'precision mediump float;varying vec2 v;uniform sampler2D t;uniform float th,kn;' +
+    'void main(){vec4 c=texture2D(t,v);float l=dot(c.rgb,vec3(.299,.587,.114));gl_FragColor=vec4(c.rgb*smoothstep(th,th+kn,l),1.);}';
+  const FS_BLUR = 'precision mediump float;varying vec2 v;uniform sampler2D t;uniform vec2 d;' +
+    'void main(){vec3 s=texture2D(t,v).rgb*.227027;' +
+    's+=(texture2D(t,v+d*1.3846).rgb+texture2D(t,v-d*1.3846).rgb)*.3162162;' +
+    's+=(texture2D(t,v+d*3.2308).rgb+texture2D(t,v-d*3.2308).rgb)*.0702703;gl_FragColor=vec4(s,1.);}';
+  const FS_COMP = 'precision mediump float;varying vec2 v;uniform sampler2D t;uniform sampler2D b;uniform float k;' +
+    'void main(){gl_FragColor=vec4(texture2D(t,v).rgb+texture2D(b,v).rgb*k,1.);}';
+
+  function shader(type, src) {
+    const s = gl.createShader(type); gl.shaderSource(s, src); gl.compileShader(s);
+    if (!gl.getShaderParameter(s, gl.COMPILE_STATUS)) throw new Error(gl.getShaderInfoLog(s));
+    return s;
+  }
+  function program(fs) {
+    const p = gl.createProgram();
+    gl.attachShader(p, shader(gl.VERTEX_SHADER, VS));
+    gl.attachShader(p, shader(gl.FRAGMENT_SHADER, fs));
+    gl.linkProgram(p);
+    if (!gl.getProgramParameter(p, gl.LINK_STATUS)) throw new Error(gl.getProgramInfoLog(p));
+    return p;
+  }
+  let pBright, pBlur, pComp;
+  try { pBright = program(FS_BRIGHT); pBlur = program(FS_BLUR); pComp = program(FS_COMP); }
+  catch (e) { meter.textContent = 'FX: shader fail — vanilla'; glc.remove(); return; }
+
+  const quad = gl.createBuffer();
+  gl.bindBuffer(gl.ARRAY_BUFFER, quad);
+  gl.bufferData(gl.ARRAY_BUFFER, new Float32Array([-1, -1, 3, -1, -1, 3]), gl.STATIC_DRAW);
+  function drawQuad(p) {
+    const loc = gl.getAttribLocation(p, 'p');
+    gl.enableVertexAttribArray(loc);
+    gl.vertexAttribPointer(loc, 2, gl.FLOAT, false, 0, 0);
+    gl.drawArrays(gl.TRIANGLES, 0, 3);
+  }
+  function makeTex(w, h) {
+    const t = gl.createTexture();
+    gl.bindTexture(gl.TEXTURE_2D, t);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
+    if (w) gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, w, h, 0, gl.RGBA, gl.UNSIGNED_BYTE, null);
+    return t;
+  }
+  function makeTarget(w, h) {
+    const tex = makeTex(w, h), fb = gl.createFramebuffer();
+    gl.bindFramebuffer(gl.FRAMEBUFFER, fb);
+    gl.framebufferTexture2D(gl.FRAMEBUFFER, gl.COLOR_ATTACHMENT0, gl.TEXTURE_2D, tex, 0);
+    return { tex, fb };
+  }
+  const srcTex = makeTex(0, 0);
+  gl.pixelStorei(gl.UNPACK_FLIP_Y_WEBGL, true);
+  let sw = 0, sh = 0, bw = 0, bh = 0, tgA = null, tgB = null;
+  function ensureSize() {
+    if (canvas.width === sw && canvas.height === sh) return;
+    sw = canvas.width; sh = canvas.height;
+    glc.width = sw; glc.height = sh;
+    glc.style.width = canvas.style.width; glc.style.height = canvas.style.height;
+    bw = Math.max(1, Math.round(sw * FXP.scale));
+    bh = Math.max(1, Math.round(sh * FXP.scale));
+    if (tgA) { gl.deleteTexture(tgA.tex); gl.deleteFramebuffer(tgA.fb); gl.deleteTexture(tgB.tex); gl.deleteFramebuffer(tgB.fb); }
+    tgA = makeTarget(bw, bh); tgB = makeTarget(bw, bh);
+  }
+  function pass(p, fb, w, h, tex, set) {
+    gl.useProgram(p);
+    gl.bindFramebuffer(gl.FRAMEBUFFER, fb);
+    gl.viewport(0, 0, w, h);
+    gl.activeTexture(gl.TEXTURE0);
+    gl.bindTexture(gl.TEXTURE_2D, tex);
+    gl.uniform1i(gl.getUniformLocation(p, 't'), 0);
+    if (set) set(p);
+    drawQuad(p);
+  }
+  // meter state: EMA fps + EMA upload ms, refreshed twice a second
+  let lastT = 0, fpsE = 0, upE = 0, lastMeter = 0;
+  fxRender = function () {
+    const t0 = performance.now();
+    if (lastT) { const f = 1000 / (t0 - lastT); fpsE = fpsE ? fpsE * 0.95 + f * 0.05 : f; }
+    lastT = t0;
+    if (!FXP.on) {
+      if (glc.style.display !== 'none') glc.style.display = 'none';
+    } else {
+      if (glc.style.display === 'none') glc.style.display = '';
+      ensureSize();
+      gl.bindTexture(gl.TEXTURE_2D, srcTex);
+      gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, canvas);
+      const t1 = performance.now();
+      upE = upE ? upE * 0.9 + (t1 - t0) * 0.1 : (t1 - t0);
+      pass(pBright, tgA.fb, bw, bh, srcTex, p => {
+        gl.uniform1f(gl.getUniformLocation(p, 'th'), FXP.threshold);
+        gl.uniform1f(gl.getUniformLocation(p, 'kn'), FXP.knee);
+      });
+      pass(pBlur, tgB.fb, bw, bh, tgA.tex, p => gl.uniform2f(gl.getUniformLocation(p, 'd'), 1 / bw, 0));
+      pass(pBlur, tgA.fb, bw, bh, tgB.tex, p => gl.uniform2f(gl.getUniformLocation(p, 'd'), 0, 1 / bh));
+      pass(pComp, null, sw, sh, srcTex, p => {
+        gl.activeTexture(gl.TEXTURE1);
+        gl.bindTexture(gl.TEXTURE_2D, tgA.tex);
+        gl.uniform1i(gl.getUniformLocation(p, 'b'), 1);
+        gl.uniform1f(gl.getUniformLocation(p, 'k'), FXP.strength);
+      });
+    }
+    if (t0 - lastMeter > 500) {
+      lastMeter = t0;
+      meter.textContent = 'FX ' + (FXP.on ? 'ON ' : 'OFF') + '· tap to toggle\n' +
+        fpsE.toFixed(0) + ' fps · upload ' + upE.toFixed(1) + ' ms';
+    }
+  };
+})();
+
 // ---------- debug hooks (used by automated tests; harmless in play) ----------
 window.GG = {
   game, simulate, solve, genSystem, difficulty, previewT, straightShotWins,
@@ -4100,6 +4239,7 @@ window.GG = {
   flingSolution: () => { const s = game.sys.sol; fling(s.vx, s.vy); return s; },
   newRun,
 };
+if (window.GG_FX) window.GG.FX = window.GG_FX;   // ?fx bloom dials (on/strength/threshold/knee/scale)
 </script>
 </body>
 </html>
