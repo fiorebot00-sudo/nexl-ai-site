@@ -91,7 +91,7 @@ const ASSIST_MARGIN = 26;         // pass within planet r + this = slingshot ass
 // ?fx opt-in as the bloom overlay; the fx meter tap toggles both for A/B.
 const LOOK = {
   on: /[?#&]fx/.test(location.href),
-  rev: 'A3',       // build tag: meter line 3 + quoted in chat after every deploy (Mike's cache check)
+  rev: 'B1',       // build tag: meter line 3 + quoted in chat after every deploy (Mike's cache check)
   // review-round defaults: deliberately bold so each dial is judgeable on a
   // phone, then dialed back to taste. Tuned values become the shipped ones.
   twinkle: 1,      // star brightness oscillation (0-1 of ±15%)
@@ -3322,9 +3322,20 @@ function draw() {
         ctx.strokeStyle = f < 0.5 ? lerpColor('#7ef0ff', '#ffffff', f * 2)
                                   : lerpColor('#ffffff', '#ffd166', (f - 0.5) * 2);
       }
-      ctx.globalAlpha = 0.55 * (i / n) * trailFade;
-      ctx.lineWidth = 0.5 + 3 * (i / n);
+      ctx.globalAlpha = (LOOK.on ? 0.7 : 0.55) * (i / n) * trailFade;
+      ctx.lineWidth = (LOOK.on ? 1 : 0.5) + 3 * (i / n);
       seg(i);
+    }
+    // B3 trail-as-light: always-on white-hot core (was insertion-only) so the
+    // ribbon survives the quarter-res bright pass and visibly glows
+    if (LOOK.on && insGk === 0) {
+      ctx.strokeStyle = '#ffffff';
+      for (let i = 1; i < n; i++) {
+        ctx.globalAlpha = 0.3 * (i / n) * trailFade;
+        ctx.lineWidth = (0.5 + 3 * (i / n)) * 0.45;
+        seg(i);
+      }
+      ctx.strokeStyle = '#7ef0ff';
     }
     if (insGk > 0) {
       ctx.strokeStyle = '#ffffff';               // white-hot core inside the gold sheath
@@ -3401,6 +3412,19 @@ function draw() {
     const goldK = game.insert
       ? Math.min(Math.max((now - game.gateLockAt) / 0.35, 0), 1) * (0.85 + 0.15 * Math.sin(now * 9))
       : 0;
+    // B-group ship light: the moving focal point is a light source — soft cyan
+    // halo + hot center under the ship (additive, feeds the bloom bright-pass)
+    if (LOOK.on) {
+      ctx.save();
+      ctx.globalCompositeOperation = 'lighter';
+      const hg = ctx.createRadialGradient(c.x, c.y, 0, c.x, c.y, 16);
+      hg.addColorStop(0, 'rgba(255,255,255,0.5)');
+      hg.addColorStop(0.25, 'rgba(126,240,255,0.35)');
+      hg.addColorStop(1, 'rgba(126,240,255,0)');
+      ctx.fillStyle = hg;
+      ctx.beginPath(); ctx.arc(c.x, c.y, 16, 0, 7); ctx.fill();
+      ctx.restore();
+    }
     drawShip(c.x, c.y, ang, true, now, 0, goldK);
   } else if (game.state === 'win' && game.winCraft && !game.winDone) {
     // entry dive: continuous with flight — same velocity at the crossing,
@@ -4189,7 +4213,9 @@ let fxRender = null;
   const ds = document.createElement('canvas');           // quarter-res downsample scratch
   const dctx = ds.getContext('2d', { alpha: false });
 
-  const FXP = { on: true, strength: 0.85, threshold: 0.45, knee: 0.35, scale: 0.25 };
+  // B1 selectivity: high threshold + high strength = glow concentrates on hot
+  // things (trail core, ship halo, wormhole, gold) instead of a milky lift
+  const FXP = { on: true, strength: 1.3, threshold: 0.6, knee: 0.25, scale: 0.25 };
   window.GG_FX = FXP;
   meter.addEventListener('pointerdown', e => { e.preventDefault(); FXP.on = !FXP.on; LOOK.on = FXP.on; });
 
