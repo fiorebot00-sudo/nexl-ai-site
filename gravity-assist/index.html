@@ -91,7 +91,7 @@ const ASSIST_MARGIN = 26;         // pass within planet r + this = slingshot ass
 // ?fx opt-in as the bloom overlay; the fx meter tap toggles both for A/B.
 const LOOK = {
   on: /[?#&]fx/.test(location.href),
-  rev: 'C5',       // build tag: meter line 3 + quoted in chat after every deploy (Mike's cache check)
+  rev: 'C6',       // build tag: meter line 3 + quoted in chat after every deploy (Mike's cache check)
   // review-round defaults: deliberately bold so each dial is judgeable on a
   // phone, then dialed back to taste. Tuned values become the shipped ones.
   twinkle: 1,      // star brightness oscillation (0-1 of ±15%)
@@ -101,7 +101,7 @@ const LOOK = {
   vignette: 0.2,   // corner falloff max alpha (0 = off)
   planetLight: 1,  // planet relight intensity (sunlit lift + atmosphere rim); URL &pl=
   shipScale: 1.15, // visual-only ship size multiplier (collision unchanged); URL &ss=
-  plume: 1.6,      // launch plume magnitude (count/size/speed/kiss all scale); URL &lp=
+  plume: 2,        // launch plume magnitude (count/size/speed/kiss all scale); URL &lp=
   // DEV CHEAT (evaluation builds): infinite ships under ?fx so Mike can play/tune
   // without restarting. &inf=0 disables. MUST be stripped/gated before ?fx flips
   // default-on for real players (D2 decision) — a cheat, not an effect.
@@ -1183,14 +1183,14 @@ function fling(vx, vy) {
     const bx = -vx / sp0, by = -vy / sp0;             // unit vector AWAY from flight
     const pw = 0.4 + 0.6 * game.previewPower;         // harder fling → bigger plume
     const pm = LOOK.plume || 1;                       // plume magnitude dial (&lp=)
-    const nP = Math.round(16 * Math.min(pm, 2));      // more chunks, capped 2x
+    const nP = Math.round(16 * Math.min(pm, 2.5));    // more chunks, capped 2.5x
     for (let i = 0; i < nP; i++) {
       const spread = (Math.random() - 0.5) * 1.25;    // fan the plume ±~36°
       const dx = bx * Math.cos(spread) - by * Math.sin(spread);
       const dy = bx * Math.sin(spread) + by * Math.cos(spread);
       const sp = (80 + Math.random() * 220) * pw * (0.7 + 0.3 * pm);
       game.particles.push({
-        x: PAD.x + dx * 6, y: PAD.y - 11 + dy * 6,
+        x: PAD.x + dx * 8, y: PAD.y - 11 + dy * 8,    // spawn ring widened for a fatter cloud
         vx: dx * sp, vy: dy * sp,
         life: (0.3 + Math.random() * 0.25) * (0.8 + 0.2 * pm), max: 0.55 * (0.8 + 0.2 * pm),
         r: (1.6 + Math.random() * 2.4) * pm,
@@ -2507,7 +2507,7 @@ function drawAmbientOne(a, now) {
 // the trajectory-verified latch. The body gradient leans toward gold and the glow
 // warms (satGold breathe at the call site); flaps/canards stay stainless, and only
 // the in-flight + win-dive call sites ever pass it (pad ship, pips, demo untouched).
-function drawShip(x, y, ang, thrust, now, squash, gold) {
+function drawShip(x, y, ang, thrust, now, squash, gold, flameK) {
   ctx.save();
   ctx.translate(x, y); ctx.rotate(ang);
   // visual-only ship scale (Mike: slightly bigger so flame/effect tuning reads on a
@@ -2515,15 +2515,26 @@ function drawShip(x, y, ang, thrust, now, squash, gold) {
   if (LOOK.on && LOOK.shipScale !== 1) ctx.scale(LOOK.shipScale, LOOK.shipScale);
   if (squash) ctx.scale(1 - squash, 1 + squash);  // loaded-spring anticipation on drag
   if (thrust) {
-    const len = 11 + Math.sin(now * 43) * 2 + Math.random() * 3;
+    // speed-responsive engine flame (Mike): call sites pass flameK from live velocity
+    // — soft fling = short lick, hard fling / slingshot speed = long roaring jet.
+    // Vanilla (no ?fx) stays the fixed flame.
+    const fk = (LOOK.on && flameK) ? flameK : 1;
+    const len = (11 + Math.sin(now * 43) * 2 + Math.random() * 3) * fk;
+    const hw = 3.2 * (0.7 + 0.3 * fk);              // width grows gently, not linearly
     const fg = ctx.createLinearGradient(-12, 0, -12 - len, 0);
     fg.addColorStop(0, 'rgba(255,220,120,0.95)');
     fg.addColorStop(0.5, 'rgba(255,130,40,0.8)');
     fg.addColorStop(1, 'rgba(255,60,20,0)');
     ctx.fillStyle = fg;
     ctx.beginPath();
-    ctx.moveTo(-11, -3.2); ctx.lineTo(-12 - len, 0); ctx.lineTo(-11, 3.2);
+    ctx.moveTo(-11, -hw); ctx.lineTo(-12 - len, 0); ctx.lineTo(-11, hw);
     ctx.closePath(); ctx.fill();
+    if (fk > 1.05) {                                // white-hot core once it's roaring
+      ctx.fillStyle = 'rgba(255,255,255,' + Math.min(0.28 * (fk - 1) * 2, 0.5).toFixed(3) + ')';
+      ctx.beginPath();
+      ctx.moveTo(-11, -hw * 0.45); ctx.lineTo(-12 - len * 0.55, 0); ctx.lineTo(-11, hw * 0.45);
+      ctx.closePath(); ctx.fill();
+    }
   }
   // rear flaps
   ctx.fillStyle = '#96a0a9';
@@ -3672,7 +3683,11 @@ function draw() {
       const lp = (performance.now() - game.launchAt) / 160;
       if (lp < 1) lStretch = 0.16 * (1 - lp) * (1 - lp);
     }
-    drawShip(rx, ry, ang, true, now, lStretch, goldK);
+    // engine flame tracks LIVE speed: soft fling ≈ 0.6x lick, max fling ≈ 1.6x,
+    // slingshot overspeed pushes toward 1.9x — thrust you can read at a glance
+    const spdNow = Math.hypot(c.vx, c.vy);
+    const flameK = 0.55 + Math.min(spdNow / MAX_V, 1.35);
+    drawShip(rx, ry, ang, true, now, lStretch, goldK, flameK);
   } else if (game.state === 'win' && game.winCraft && !game.winDone) {
     // entry dive: continuous with flight — same velocity at the crossing,
     // steering + acceleration carry it into the throat, fading as it goes
@@ -3684,7 +3699,8 @@ function draw() {
     ctx.translate(w.x, w.y); ctx.scale(sc, sc); ctx.translate(-w.x, -w.y);
     // a golden ship dives golden — the reward visibly flows into the gate (D-adr-021)
     drawShip(w.x, w.y, Math.atan2(w.vy, w.vx), true, now, 0,
-             game.insertThread ? 0.85 + 0.15 * Math.sin(now * 9) : 0);
+             game.insertThread ? 0.85 + 0.15 * Math.sin(now * 9) : 0,
+             0.55 + Math.min(Math.hypot(w.vx, w.vy) / MAX_V, 1.35));
     ctx.restore();
   } else if (game.state === 'aim') {
     const squash = game.drag && game.preview ? 0.04 * game.previewPower : 0;
