@@ -4091,13 +4091,16 @@ if (document.fonts && document.fonts.load) {
 }
 requestAnimationFrame(frame);
 
-// ---------- ?fx spike: WebGL bloom post-FX over the untouched 2D frame ----------
-// The 2D canvas keeps rendering exactly as shipped. With ?fx in the URL, each
-// finished frame is uploaded to a WebGL1 overlay and run through a bloom chain
-// (bright-pass -> separable gaussian at quarter res -> additive composite).
-// The overlay is pointer-events:none so input still lands on the game canvas.
-// Any init failure removes the overlay: fallback is the vanilla game.
-// Meter (top-left) shows fps + per-frame upload cost; TAP IT to A/B toggle.
+// ---------- ?fx spike v2: WebGL bloom overlay over the untouched 2D frame ----------
+// The 2D canvas keeps rendering as shipped and STAYS VISIBLE as the base layer.
+// With ?fx, each frame is downsampled to quarter res on a scratch 2D canvas,
+// uploaded to a WebGL1 overlay (16x less data than the v1 full-res upload that
+// made iOS jerky), bright-passed + blurred there, and the resulting GLOW ONLY
+// is additively blended over the game via CSS plus-lighter (screen fallback).
+// The overlay backing store is quarter res too — a blurred glow upscales free.
+// pointer-events:none, so input still lands on the game canvas. Any init
+// failure removes the overlay: fallback is the vanilla game.
+// Meter (top-left) shows fps + per-frame downsample+upload cost; TAP to A/B.
 let fxRender = null;
 (function initFX() {
   if (!/[?#&]fx/.test(location.href)) return;
@@ -4106,13 +4109,16 @@ let fxRender = null;
   meter.textContent = 'FX: init…';
   document.body.appendChild(meter);
   let gl, glc;
+  const blend = (window.CSS && CSS.supports && CSS.supports('mix-blend-mode', 'plus-lighter')) ? 'plus-lighter' : 'screen';
   try {
     glc = document.createElement('canvas');
-    glc.style.cssText = 'position:fixed;left:0;top:0;pointer-events:none;z-index:5';
+    glc.style.cssText = 'position:fixed;left:0;top:0;pointer-events:none;z-index:5;mix-blend-mode:' + blend;
     gl = glc.getContext('webgl', { alpha: false, antialias: false, depth: false, stencil: false, powerPreference: 'high-performance' });
   } catch (e) { gl = null; }
   if (!gl) { meter.textContent = 'FX: WebGL unavailable — vanilla'; return; }
   document.body.appendChild(glc);
+  const ds = document.createElement('canvas');           // quarter-res downsample scratch
+  const dctx = ds.getContext('2d', { alpha: false });
 
   const FXP = { on: true, strength: 0.85, threshold: 0.45, knee: 0.35, scale: 0.25 };
   window.GG_FX = FXP;
@@ -4125,8 +4131,8 @@ let fxRender = null;
     'void main(){vec3 s=texture2D(t,v).rgb*.227027;' +
     's+=(texture2D(t,v+d*1.3846).rgb+texture2D(t,v-d*1.3846).rgb)*.3162162;' +
     's+=(texture2D(t,v+d*3.2308).rgb+texture2D(t,v-d*3.2308).rgb)*.0702703;gl_FragColor=vec4(s,1.);}';
-  const FS_COMP = 'precision mediump float;varying vec2 v;uniform sampler2D t;uniform sampler2D b;uniform float k;' +
-    'void main(){gl_FragColor=vec4(texture2D(t,v).rgb+texture2D(b,v).rgb*k,1.);}';
+  const FS_ADD = 'precision mediump float;varying vec2 v;uniform sampler2D t;uniform float k;' +
+    'void main(){gl_FragColor=vec4(texture2D(t,v).rgb*k,1.);}';
 
   function shader(type, src) {
     const s = gl.createShader(type); gl.shaderSource(s, src); gl.compileShader(s);
@@ -4141,8 +4147,8 @@ let fxRender = null;
     if (!gl.getProgramParameter(p, gl.LINK_STATUS)) throw new Error(gl.getProgramInfoLog(p));
     return p;
   }
-  let pBright, pBlur, pComp;
-  try { pBright = program(FS_BRIGHT); pBlur = program(FS_BLUR); pComp = program(FS_COMP); }
+  let pBright, pBlur, pAdd;
+  try { pBright = program(FS_BRIGHT); pBlur = program(FS_BLUR); pAdd = program(FS_ADD); }
   catch (e) { meter.textContent = 'FX: shader fail — vanilla'; glc.remove(); return; }
 
   const quad = gl.createBuffer();
@@ -4176,10 +4182,12 @@ let fxRender = null;
   function ensureSize() {
     if (canvas.width === sw && canvas.height === sh) return;
     sw = canvas.width; sh = canvas.height;
-    glc.width = sw; glc.height = sh;
-    glc.style.width = canvas.style.width; glc.style.height = canvas.style.height;
     bw = Math.max(1, Math.round(sw * FXP.scale));
     bh = Math.max(1, Math.round(sh * FXP.scale));
+    glc.width = bw; glc.height = bh;                       // quarter-res backing store,
+    glc.style.width = canvas.style.width;                  // CSS-stretched to full size
+    glc.style.height = canvas.style.height;
+    ds.width = bw; ds.height = bh;
     if (tgA) { gl.deleteTexture(tgA.tex); gl.deleteFramebuffer(tgA.fb); gl.deleteTexture(tgB.tex); gl.deleteFramebuffer(tgB.fb); }
     tgA = makeTarget(bw, bh); tgB = makeTarget(bw, bh);
   }
@@ -4204,8 +4212,9 @@ let fxRender = null;
     } else {
       if (glc.style.display === 'none') glc.style.display = '';
       ensureSize();
+      dctx.drawImage(canvas, 0, 0, bw, bh);                // GPU blit, not a readback
       gl.bindTexture(gl.TEXTURE_2D, srcTex);
-      gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, canvas);
+      gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, ds);
       const t1 = performance.now();
       upE = upE ? upE * 0.9 + (t1 - t0) * 0.1 : (t1 - t0);
       pass(pBright, tgA.fb, bw, bh, srcTex, p => {
@@ -4214,12 +4223,7 @@ let fxRender = null;
       });
       pass(pBlur, tgB.fb, bw, bh, tgA.tex, p => gl.uniform2f(gl.getUniformLocation(p, 'd'), 1 / bw, 0));
       pass(pBlur, tgA.fb, bw, bh, tgB.tex, p => gl.uniform2f(gl.getUniformLocation(p, 'd'), 0, 1 / bh));
-      pass(pComp, null, sw, sh, srcTex, p => {
-        gl.activeTexture(gl.TEXTURE1);
-        gl.bindTexture(gl.TEXTURE_2D, tgA.tex);
-        gl.uniform1i(gl.getUniformLocation(p, 'b'), 1);
-        gl.uniform1f(gl.getUniformLocation(p, 'k'), FXP.strength);
-      });
+      pass(pAdd, null, bw, bh, tgA.tex, p => gl.uniform1f(gl.getUniformLocation(p, 'k'), FXP.strength));
     }
     if (t0 - lastMeter > 500) {
       lastMeter = t0;
