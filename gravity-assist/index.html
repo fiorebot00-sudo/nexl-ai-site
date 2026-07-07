@@ -91,7 +91,7 @@ const ASSIST_MARGIN = 26;         // pass within planet r + this = slingshot ass
 // ?fx opt-in as the bloom overlay; the fx meter tap toggles both for A/B.
 const LOOK = {
   on: /[?#&]fx/.test(location.href),
-  rev: 'B3',       // build tag: meter line 3 + quoted in chat after every deploy (Mike's cache check)
+  rev: 'C1',       // build tag: meter line 3 + quoted in chat after every deploy (Mike's cache check)
   // review-round defaults: deliberately bold so each dial is judgeable on a
   // phone, then dialed back to taste. Tuned values become the shipped ones.
   twinkle: 1,      // star brightness oscillation (0-1 of ±15%)
@@ -99,7 +99,32 @@ const LOOK = {
   parallax: 1.6,   // ship-keyed micro-parallax multiplier (0 = off; 1 = near layer ~2%)
   wash: 1.7,       // galaxy ambient light wash intensity
   vignette: 0.2,   // corner falloff max alpha (0 = off)
+  // ---------- per-feature toggles (all default ON under ?fx) ----------
+  // Every discrete effect is individually switchable so Mike can A/B any one in
+  // isolation. URL: &no=launch,crash disables listed features; &only=launch runs
+  // ONLY those. Live at runtime via GG.LOOK.f.<name> = false. Names below.
+  f: {
+    stars: true,     // A1/A2 star tint + twinkle + parallax + hero glow-cores
+    wash: true,      // A3 galaxy ambient light wash
+    vignette: true,  // A4 corner falloff
+    shiplight: true, // B ship halo (moving focal point as a light source)
+    trail: true,     // B3 trail-as-light hot core
+    emissive: true,  // B2 emissive cores on wormhole / sats / rewards
+    launch: true,    // C1 launch beat: squash + exhaust burst + brightness kiss
+    crash: true,     // C2 crash upgrade: directional debris + ember sparks + shockwave
+    escape: true,    // C3 escape garnish: radial star-streak pull near the gate
+    slowmo: true,    // C4 slow-mo visual key: deeper vignette + desat pulse
+    ambient: true,   // C5 ambient life: sat bob + engine glints
+  },
 };
+(() => {
+  const only = (location.href.match(/[?&]only=([a-z,]+)/) || [])[1];
+  const no = (location.href.match(/[?&]no=([a-z,]+)/) || [])[1];
+  if (only) { const keep = new Set(only.split(',')); for (const k in LOOK.f) LOOK.f[k] = keep.has(k); }
+  if (no) for (const k of no.split(',')) if (k in LOOK.f) LOOK.f[k] = false;
+})();
+// gate helper: master ?fx on AND this feature enabled
+const fxOn = k => LOOK.on && LOOK.f[k];
 
 // ---------- parallax starfield (visual only; drifts down = we fly up) ----------
 // Luminance discipline (RESEARCH-VISUAL 1.4): background stays below ~35% of
@@ -114,8 +139,10 @@ const STAR_LAYERS = (() => {
                    r: size * (0.6 + Math.random() * 0.8), a: alpha * (0.5 + Math.random() * 0.5) });
     layers.push({ speed, stars });
   }
-  for (let i = 0; i < 4; i++)   // hero stars: slowest layer, slightly bigger, still dim
-    layers[0].stars.push({ x: Math.random() * VW, y: Math.random() * VH, r: 1.6, a: 0.22, hero: true });
+  // hero stars: fewer, larger, glow-cored (A1/A2 bolder round) so they read on a
+  // phone and carry visible parallax. Non-fx path still sees dim dots (a capped).
+  for (let i = 0; i < 5; i++)
+    layers[0].stars.push({ x: Math.random() * VW, y: Math.random() * VH, r: 2.1, a: 0.26, hero: true });
   return layers;
 })();
 
@@ -1130,6 +1157,28 @@ function fling(vx, vy) {
   game.chainThisFlight = 0;
   game.hintsDone = true;
   game.freezeT = performance.now() / 1000;   // signature motion freezes in flight
+  // C1 launch beat: ignition. Exhaust plume fired opposite the launch vector +
+  // a pad brightness kiss + a brief ship stretch (applied in the flight draw).
+  // All behind the 'launch' flag; the burst is cosmetic (particles, not physics).
+  if (fxOn('launch')) {
+    game.launchAt = performance.now();
+    const sp0 = Math.hypot(vx, vy) || 1;
+    const bx = -vx / sp0, by = -vy / sp0;             // unit vector AWAY from flight
+    const pw = 0.4 + 0.6 * game.previewPower;         // harder fling → bigger plume
+    for (let i = 0; i < 16; i++) {
+      const spread = (Math.random() - 0.5) * 1.1;     // fan the plume ±~30°
+      const dx = bx * Math.cos(spread) - by * Math.sin(spread);
+      const dy = bx * Math.sin(spread) + by * Math.cos(spread);
+      const sp = (80 + Math.random() * 200) * pw;
+      game.particles.push({
+        x: PAD.x + dx * 6, y: PAD.y - 11 + dy * 6,
+        vx: dx * sp, vy: dy * sp,
+        life: 0.28 + Math.random() * 0.22, max: 0.5,
+        r: 1.6 + Math.random() * 2.4,
+        col: Math.random() < 0.5 ? '#bfe8ff' : '#ffffff', add: true, a0: 0.8,
+      });
+    }
+  }
   sfx.launch();
 }
 
@@ -1178,11 +1227,33 @@ function endRun(byCrash, x, y, crashPi) {
     game.shakeAt = performance.now() + 60;      // shake starts after the hitstop
     game.freezeUntil = performance.now() + 60;
     const _sp = Math.hypot(game.craft.vx, game.craft.vy) || 1;
-    game.shakeKx = game.craft.vx / _sp * 6;
-    game.shakeKy = game.craft.vy / _sp * 6;
-    for (let i = 0; i < 18; i++) {
-      const th = Math.random() * Math.PI * 2, sp = 60 + Math.random() * 220;
-      game.particles.push({ x, y, vx: Math.cos(th) * sp, vy: Math.sin(th) * sp, life: 0.55 });
+    const ivx = game.craft.vx / _sp, ivy = game.craft.vy / _sp;   // impact direction
+    game.shakeKx = ivx * 6;
+    game.shakeKy = ivy * 6;
+    if (fxOn('crash')) {
+      // C2 crash upgrade: debris chunks + ember sparks fan FORWARD along the
+      // impact (inheriting ship velocity) instead of a symmetric puff, plus a
+      // brief expanding shockwave ring. Red-orange register (danger) throughout.
+      for (let i = 0; i < 20; i++) {                 // debris chunks (opaque, tumble forward)
+        const th = Math.atan2(ivy, ivx) + (Math.random() - 0.5) * 2.2;
+        const sp = 80 + Math.random() * 260;
+        game.particles.push({ x, y, vx: Math.cos(th) * sp + ivx * 40, vy: Math.sin(th) * sp + ivy * 40,
+          life: 0.4 + Math.random() * 0.4, max: 0.8, r: 1.5 + Math.random() * 2.5,
+          col: Math.random() < 0.5 ? '#ff8a5c' : '#ffb0a0' });
+      }
+      for (let i = 0; i < 14; i++) {                 // ember sparks (bright, additive, fast)
+        const th = Math.atan2(ivy, ivx) + (Math.random() - 0.5) * 1.4;
+        const sp = 160 + Math.random() * 340;
+        game.particles.push({ x, y, vx: Math.cos(th) * sp, vy: Math.sin(th) * sp,
+          life: 0.22 + Math.random() * 0.25, max: 0.47, r: 0.9 + Math.random() * 1.4,
+          col: Math.random() < 0.4 ? '#ffe0a0' : '#ff6a3c', add: true, a0: 0.9 });
+      }
+      game.shock = { x, y, at: performance.now(), dur: 340 };   // shockwave ring
+    } else {
+      for (let i = 0; i < 18; i++) {
+        const th = Math.random() * Math.PI * 2, sp = 60 + Math.random() * 220;
+        game.particles.push({ x, y, vx: Math.cos(th) * sp, vy: Math.sin(th) * sp, life: 0.55 });
+      }
     }
     sfx.crash();
   } else {
@@ -1890,6 +1961,21 @@ function drawSat(sx, sy, now) {
   const H = '#' + bio.decor.hues[0].split(',').map(n => (+n).toString(16).padStart(2, '0')).join('');
   const form = SAT_FORMS[GALAXIES.indexOf(bio)] || 'comms';
   const t = now;
+  // C5 ambient life: a gentle visual-only bob (≤1.5px, never enough to shift the
+  // grab). B2 emissive: a soft gold breath under the reward core so it reads as a
+  // light source and feeds the bloom bright-pass.
+  if (fxOn('ambient')) sy += 1.5 * Math.sin(now * 1.6 + sx * 0.05);
+  if (fxOn('emissive')) {
+    ctx.save();
+    ctx.globalCompositeOperation = 'lighter';
+    const eb = 0.16 + 0.06 * Math.sin(now * 5);
+    const eg = ctx.createRadialGradient(sx, sy, 0, sx, sy, 15);
+    eg.addColorStop(0, 'rgba(255,209,102,' + eb.toFixed(3) + ')');
+    eg.addColorStop(1, 'rgba(255,209,102,0)');
+    ctx.fillStyle = eg;
+    ctx.beginPath(); ctx.arc(sx, sy, 15, 0, 7); ctx.fill();
+    ctx.restore();
+  }
   ctx.save();
   ctx.translate(sx, sy);
   ctx.rotate(now * 0.5);
@@ -3004,7 +3090,7 @@ function draw() {
 
   // A3 galaxy light wash: one soft ground-up ambient glow in the galaxy's own
   // hue — "the launch site has a light source". Screen space, behind everything.
-  if (LOOK.on && LOOK.wash) {
+  if (fxOn('wash') && LOOK.wash) {
     const cw = canvas.width, ch = canvas.height;
     const wg = ctx.createRadialGradient(cw / 2, ch * 1.08, ch * 0.05, cw / 2, ch * 1.08, ch * 0.85);
     wg.addColorStop(0, 'rgba(' + galaxy.decor.hues[0] + ',' + (0.10 * LOOK.wash * dim).toFixed(3) + ')');
@@ -3028,8 +3114,9 @@ function draw() {
   const S = game.sys;
   // A1 star tint: pull the field toward the galaxy's primary hue (LOOK.tint of
   // the way from the neutral #cfe0ff). Base 207,224,255; hues are 'r,g,b'.
+  const starsOn = fxOn('stars');
   let starCol = '#cfe0ff';
-  if (LOOK.on && LOOK.tint) {
+  if (starsOn && LOOK.tint) {
     const h = galaxy.decor.hues[0].split(',');
     starCol = 'rgb(' + Math.round(207 + (h[0] - 207) * LOOK.tint) + ',' +
                        Math.round(224 + (h[1] - 224) * LOOK.tint) + ',' +
@@ -3042,7 +3129,7 @@ function draw() {
   // from the ship's offset from center — a depth cue, not a camera. Layer
   // factor scales with drift speed (near layer = strongest, ~2% of offset).
   let plx = 0, ply = 0;
-  if (LOOK.on && LOOK.parallax && game.state === 'flight' && game.craft) {
+  if (starsOn && LOOK.parallax && game.state === 'flight' && game.craft) {
     plx = (game.craft.x - VW / 2) * 0.02 * LOOK.parallax;
     ply = (game.craft.y - VH / 2) * 0.02 * LOOK.parallax;
   }
@@ -3056,7 +3143,7 @@ function draw() {
       const sy = ((s.y + now * L.speed - ply * pf) % VH + VH) % VH;
       let sa = s.hero ? s.a : Math.min(s.a * galaxy.stars.alpha * dim, 0.55);
       // A1 twinkle: gentle per-star phase; heroes stay steady (the last lights)
-      if (LOOK.on && LOOK.twinkle && !s.hero)
+      if (starsOn && LOOK.twinkle && !s.hero)
         sa *= 1 - 0.15 * LOOK.twinkle * (0.5 + 0.5 * Math.sin(now * 1.8 + i * 2.399 + L.speed));
       // E2: per-galaxy star glyph — plotter squares (Blueprint), infall streaks
       // (the Lens); hero stars stay dots everywhere (the last lights)
@@ -3068,6 +3155,24 @@ function draw() {
         ctx.globalAlpha = sa * 0.8;
         ctx.beginPath(); ctx.moveTo(sx, sy);
         ctx.lineTo(sx + Math.cos(at2) * 5, sy + Math.sin(at2) * 5); ctx.stroke();
+      } else if (s.hero && starsOn) {
+        // A1/A2 bolder round (Mike: "don't want to forget stars"): hero stars get
+        // a white-hot core + additive halo big enough to survive the ¼-res bright
+        // pass and to show parallax on a phone. Slow twinkle on the halo only.
+        const tw = 1 - 0.22 * LOOK.twinkle * (0.5 + 0.5 * Math.sin(now * 1.3 + i * 2.399));
+        ctx.save();
+        ctx.globalCompositeOperation = 'lighter';
+        const hr = s.r * 3.4;
+        const hgr = ctx.createRadialGradient(sx, sy, 0, sx, sy, hr);
+        hgr.addColorStop(0, 'rgba(255,255,255,' + (sa * 1.6 * tw).toFixed(3) + ')');
+        hgr.addColorStop(0.35, 'rgba(190,222,255,' + (sa * 0.5 * tw).toFixed(3) + ')');
+        hgr.addColorStop(1, 'rgba(190,222,255,0)');
+        ctx.fillStyle = hgr;
+        ctx.beginPath(); ctx.arc(sx, sy, hr, 0, 7); ctx.fill();
+        ctx.globalAlpha = Math.min(sa * 1.4 * tw, 0.6);
+        ctx.fillStyle = '#fff';
+        ctx.beginPath(); ctx.arc(sx, sy, s.r * 0.9, 0, 7); ctx.fill();
+        ctx.restore();
       } else {
         ctx.globalAlpha = sa;
         ctx.beginPath(); ctx.arc(sx, sy, s.r, 0, 7); ctx.fill();
@@ -3306,6 +3411,7 @@ function draw() {
   // player→reward crossover (D-adr-020) — with a white-hot core: the laser line.
   const trailFade = game.state === 'dead' ? Math.max(0, 1 - (performance.now() - game.deadAt) / 2000) : 1;
   if (game.trail.length > 2 && trailFade > 0 && game.state !== 'aim') {
+    const trailFx = fxOn('trail');
     const insGk = game.insert ? Math.min(Math.max((now - game.gateLockAt) / 0.35, 0), 1) : 0;
     ctx.save();
     ctx.globalCompositeOperation = 'lighter';
@@ -3324,13 +3430,13 @@ function draw() {
         ctx.strokeStyle = f < 0.5 ? lerpColor('#7ef0ff', '#ffffff', f * 2)
                                   : lerpColor('#ffffff', '#ffd166', (f - 0.5) * 2);
       }
-      ctx.globalAlpha = (LOOK.on ? 0.7 : 0.55) * (i / n) * trailFade;
-      ctx.lineWidth = (LOOK.on ? 1 : 0.5) + 3 * (i / n);
+      ctx.globalAlpha = (trailFx ? 0.7 : 0.55) * (i / n) * trailFade;
+      ctx.lineWidth = (trailFx ? 1 : 0.5) + 3 * (i / n);
       seg(i);
     }
     // B3 trail-as-light: always-on white-hot core (was insertion-only) so the
     // ribbon survives the quarter-res bright pass and visibly glows
-    if (LOOK.on && insGk === 0) {
+    if (trailFx && insGk === 0) {
       ctx.strokeStyle = '#ffffff';
       for (let i = 1; i < n; i++) {
         ctx.globalAlpha = 0.3 * (i / n) * trailFade;
@@ -3395,6 +3501,22 @@ function draw() {
   }
   if (game.state === 'flight') {
     const c = game.craft;
+    // C1 pad brightness kiss: a short additive flare on the platform at ignition
+    if (fxOn('launch') && game.launchAt) {
+      const kp = (performance.now() - game.launchAt) / 180;
+      if (kp < 1) {
+        ctx.save();
+        ctx.globalCompositeOperation = 'lighter';
+        const kr = 26 * (0.4 + kp * 0.6);
+        const kg = ctx.createRadialGradient(PAD.x, PAD.y - 8, 0, PAD.x, PAD.y - 8, kr);
+        kg.addColorStop(0, 'rgba(255,255,255,' + (0.55 * (1 - kp)).toFixed(3) + ')');
+        kg.addColorStop(0.4, 'rgba(150,224,255,' + (0.35 * (1 - kp)).toFixed(3) + ')');
+        kg.addColorStop(1, 'rgba(150,224,255,0)');
+        ctx.fillStyle = kg;
+        ctx.beginPath(); ctx.arc(PAD.x, PAD.y - 8, kr, 0, 7); ctx.fill();
+        ctx.restore();
+      }
+    }
     let ang = Math.atan2(c.vy, c.vx);
     const gA = S.layout.gate;
     const adx = gA.x - c.x, ady = gA.y - c.y;
@@ -3414,6 +3536,31 @@ function draw() {
     const goldK = game.insert
       ? Math.min(Math.max((now - game.gateLockAt) / 0.35, 0), 1) * (0.85 + 0.15 * Math.sin(now * 9))
       : 0;
+    // C3 escape garnish: once entry is latched (D-adr-017 certainty contract), a
+    // ring of star-streaks is pulled radially INTO the gate, intensifying with the
+    // slow-mo ramp — the world visibly leaning toward the crossing. Cosmetic only.
+    if (fxOn('escape') && game.gateLock) {
+      const eRamp = Math.min((now - game.gateLockAt) / 0.35, 1) * (game.slowK || 1);
+      if (eRamp > 0.02) {
+        ctx.save();
+        ctx.globalCompositeOperation = 'lighter';
+        ctx.strokeStyle = 'rgba(190,240,255,' + (0.5 * eRamp).toFixed(3) + ')';
+        ctx.lineCap = 'round';
+        const streaks = 16, pull = now * 3;
+        for (let k = 0; k < streaks; k++) {
+          const a = (k / streaks) * Math.PI * 2 + k * 0.7;
+          const wob = (0.5 + 0.5 * Math.sin(pull + k)) ;      // beads march inward
+          const r1 = gA.r * (2.6 - 1.3 * wob), r2 = r1 - (14 + 20 * eRamp);
+          ctx.globalAlpha = eRamp * (0.35 + 0.4 * wob);
+          ctx.lineWidth = 1 + 1.5 * eRamp;
+          ctx.beginPath();
+          ctx.moveTo(gA.x + Math.cos(a) * r1, gA.y + Math.sin(a) * r1);
+          ctx.lineTo(gA.x + Math.cos(a) * r2, gA.y + Math.sin(a) * r2);
+          ctx.stroke();
+        }
+        ctx.restore();
+      }
+    }
     // Fixed-timestep aliasing fix: the ship is DRAWN at a position interpolated
     // between the last two 120Hz physics states by the accumulator remainder —
     // sub-tick smoothness at any display rate. Physics state itself untouched.
@@ -3422,7 +3569,7 @@ function draw() {
     const ry = c.py === undefined ? c.y : c.py + (c.y - c.py) * tf;
     // B-group ship light: the moving focal point is a light source — soft cyan
     // halo + hot center under the ship (additive, feeds the bloom bright-pass)
-    if (LOOK.on) {
+    if (fxOn('shiplight')) {
       ctx.save();
       ctx.globalCompositeOperation = 'lighter';
       const hg = ctx.createRadialGradient(rx, ry, 0, rx, ry, 16);
@@ -3433,7 +3580,14 @@ function draw() {
       ctx.beginPath(); ctx.arc(rx, ry, 16, 0, 7); ctx.fill();
       ctx.restore();
     }
-    drawShip(rx, ry, ang, true, now, 0, goldK);
+    // C1 launch stretch: ship elongates along flight for ~0.16s after ignition,
+    // easing back to shape — the loaded spring releasing.
+    let lStretch = 0;
+    if (fxOn('launch') && game.launchAt) {
+      const lp = (performance.now() - game.launchAt) / 160;
+      if (lp < 1) lStretch = 0.16 * (1 - lp) * (1 - lp);
+    }
+    drawShip(rx, ry, ang, true, now, lStretch, goldK);
   } else if (game.state === 'win' && game.winCraft && !game.winDone) {
     // entry dive: continuous with flight — same velocity at the crossing,
     // steering + acceleration carry it into the throat, fading as it goes
@@ -3452,12 +3606,32 @@ function draw() {
     drawShip(PAD.x, PAD.y - 11, -Math.PI / 2, false, now, squash);   // rear rests on the platform
   }
 
-  ctx.fillStyle = '#ffb0a0';
+  // particles: crash debris (red-orange, default) + launch exhaust / ember sparks
+  // carry their own col/r/blend/max so one pool serves every burst.
   for (const p of game.particles) {
-    ctx.globalAlpha = Math.max(p.life / 0.55, 0);
-    ctx.beginPath(); ctx.arc(p.x, p.y, 2.5, 0, 7); ctx.fill();
+    const max = p.max || 0.55;
+    ctx.globalAlpha = Math.max(p.life / max, 0) * (p.a0 || 1);
+    ctx.globalCompositeOperation = p.add ? 'lighter' : 'source-over';
+    ctx.fillStyle = p.col || '#ffb0a0';
+    ctx.beginPath(); ctx.arc(p.x, p.y, p.r || 2.5, 0, 7); ctx.fill();
   }
+  ctx.globalCompositeOperation = 'source-over';
   ctx.globalAlpha = 1;
+
+  // C2 shockwave ring: a single expanding red-orange hoop at the impact, ~0.34s
+  if (game.shock) {
+    const sp2 = (performance.now() - game.shock.at) / game.shock.dur;
+    if (sp2 >= 1) game.shock = null;
+    else {
+      const rr = 8 + sp2 * 82;
+      ctx.save();
+      ctx.globalCompositeOperation = 'lighter';
+      ctx.strokeStyle = 'rgba(255,140,90,' + (0.5 * (1 - sp2)).toFixed(3) + ')';
+      ctx.lineWidth = 3 * (1 - sp2) + 0.5;
+      ctx.beginPath(); ctx.arc(game.shock.x, game.shock.y, rr, 0, 7); ctx.stroke();
+      ctx.restore();
+    }
+  }
 
   // (floats + reward FX draw in the final overlay pass — RESEARCH-SCORE-FX P1a)
 
@@ -4135,7 +4309,7 @@ function draw() {
 
   // A4 vignette: cached corner falloff, redrawn only on resize. Whole frame —
   // subtle enough (LOOK.vignette max alpha) to leave the HUD readable.
-  if (LOOK.on && LOOK.vignette > 0) {
+  if (fxOn('vignette') && LOOK.vignette > 0) {
     if (!draw.vig || draw.vig.width !== canvas.width || draw.vig.height !== canvas.height || draw.vigA !== LOOK.vignette) {
       draw.vig = document.createElement('canvas');
       draw.vig.width = canvas.width; draw.vig.height = canvas.height;
@@ -4150,7 +4324,15 @@ function draw() {
       vc.fillRect(0, 0, canvas.width, canvas.height);
     }
     ctx.setTransform(1, 0, 0, 1, 0, 0);
+    ctx.globalAlpha = 1;
     ctx.drawImage(draw.vig, 0, 0);
+    // C4 slow-mo key: an extra vignette pass darkens the corners as the gate
+    // slow-mo ramps in, so the dilation is *seen* (tell reads in the eye).
+    if (fxOn('slowmo') && (game.slowK || 0) > 0.01) {
+      ctx.globalAlpha = Math.min(game.slowK * 0.9, 0.9);
+      ctx.drawImage(draw.vig, 0, 0);
+      ctx.globalAlpha = 1;
+    }
   }
 }
 
@@ -4162,6 +4344,7 @@ function frame(now) {
   let ft = (now - last) / 1000; last = now;
   if (ft > 0.1) ft = 0.1;
   if (game.freezeUntil && now < game.freezeUntil) ft = 0;   // 60ms crash hitstop
+  let slowK = 0;   // 0..1 slow-mo depth, drives the C4 visual key (vignette + desat)
   if (game.state === 'flight' && game.gateLock) {
     // slow-mo is part of the tell (D-adr-017): it only engages when entry is
     // certain, and deepens gradually on the way in — 1x at the lean ring's edge
@@ -4170,16 +4353,27 @@ function frame(now) {
     const ad = Math.hypot(g.x - c.x, g.y - c.y);
     const wgt = Math.max(0, Math.min(1 - (ad - g.r) / (g.r * 1.4), 0.9)) / 0.9;
     const ramp = Math.min((now / 1000 - game.gateLockAt) / 0.35, 1);
-    ft *= 1 - 0.45 * wgt * ramp;
+    slowK = wgt * ramp;
+    ft *= 1 - 0.45 * slowK;
   } else if (game.state === 'win' && game.winCraft && !game.winDone) {
+    slowK = 1;
     ft *= 0.55;  // the crossing happens at full slow-mo depth; carry the rate through
   }
+  game.slowK = slowK;
   // earned peak: triple slingshot dilates the world briefly (P3, once per flight)
   if (game.state === 'flight' && game.tripleAt && (now - game.tripleAt) / 1000 < 0.35) ft *= 0.5;
   acc += ft;
   while (acc >= DT) { tick(DT); acc -= DT; }
   game.tickFrac = acc / DT;   // sub-tick remainder: draw() lerps the ship px,py→x,y
   draw();
+  // C4 slow-mo desat pulse: GPU-composited CSS filter (iOS-safe full-frame path).
+  // Pulls ~18% saturation + a hair of contrast as slow-mo deepens; snaps back off.
+  const wantDesat = fxOn('slowmo') && (game.slowK || 0) > 0.01;
+  const dk = wantDesat ? game.slowK : 0;
+  if (dk !== frame.lastDk) {
+    canvas.style.filter = dk > 0 ? 'saturate(' + (1 - 0.18 * dk).toFixed(3) + ') contrast(' + (1 + 0.05 * dk).toFixed(3) + ')' : '';
+    frame.lastDk = dk;
+  }
   if (fxRender) fxRender();
   requestAnimationFrame(frame);
 }
