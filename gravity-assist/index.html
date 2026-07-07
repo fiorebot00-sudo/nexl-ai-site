@@ -91,7 +91,7 @@ const ASSIST_MARGIN = 26;         // pass within planet r + this = slingshot ass
 // ?fx opt-in as the bloom overlay; the fx meter tap toggles both for A/B.
 const LOOK = {
   on: /[?#&]fx/.test(location.href),
-  rev: 'C2',       // build tag: meter line 3 + quoted in chat after every deploy (Mike's cache check)
+  rev: 'C3',       // build tag: meter line 3 + quoted in chat after every deploy (Mike's cache check)
   // review-round defaults: deliberately bold so each dial is judgeable on a
   // phone, then dialed back to taste. Tuned values become the shipped ones.
   twinkle: 1,      // star brightness oscillation (0-1 of ±15%)
@@ -126,6 +126,8 @@ const LOOK = {
   if (no) for (const k of no.split(',')) if (k in LOOK.f) LOOK.f[k] = false;
   const pl = (location.href.match(/[?&]pl=([\d.]+)/) || [])[1];   // planet relight intensity dial
   if (pl) LOOK.planetLight = parseFloat(pl);
+  const plv = (location.href.match(/[?&]plv=([a-z]+)/) || [])[1]; // force one relight variant everywhere
+  if (plv) LOOK.planetVariant = plv;
 })();
 // gate helper: master ?fx on AND this feature enabled
 const fxOn = k => LOOK.on && LOOK.f[k];
@@ -1733,6 +1735,63 @@ function drawPlanetStylized(p, pm, cols) {
   ctx.restore();
 }
 
+// ---------- planet relight (soft-bright family, per-galaxy VARIATION) ----------
+// Mike 2026-07-07: run the relight across the entire set WITH variation — options
+// to evaluate, room to play. Five treatments, assigned per galaxy below. All shape
+// by DARKENING (shadow can't cross the bloom threshold → no whiteout); only the
+// thin limb glow is additive, and it's meant to feed the bloom as a crisp edge.
+// Force one everywhere with ?fx&plv=<name>; intensity rides &pl= as before.
+const PL_VARIANTS = {
+  soft:  { sd: 0.34, se: 0.62, rw0: 0.90, rw1: 1.13, ra: 0.40 },              // C2 look: shadow + thin rim
+  rim:   { sd: 0.45, se: 0.75, rw0: 0.88, rw1: 1.18, ra: 0.62 },              // deeper shade, hot rim (premium lean)
+  haze:  { sd: 0.20, se: 0.38, rw0: 0.92, rw1: 1.38, ra: 0.30 },              // wide dreamy atmosphere
+  edge:  { sd: 0.38, se: 0.66, rw0: 0.90, rw1: 1.12, ra: 0.28, arc: true },   // + lit arc on the sun side
+  ember: { sd: 0.30, se: 0.55, rw0: 0.90, rw1: 1.16, ra: 0.50, flip: true, warm: true }, // forge: dark top, warm glow
+};
+// galaxy index → variant (order matches GALAXIES; laps wrap via galaxyFor)
+const PL_BY_GALAXY = ['soft', 'haze', 'edge', 'rim', 'haze', 'soft', 'edge', 'ember', 'rim', 'ember', 'rim'];
+function planetRelight(x, y, r, cols, pm) {
+  if (!fxOn('planetlight')) return;
+  const pL = LOOK.planetLight || 1;
+  const v = PL_VARIANTS[LOOK.planetVariant] ||
+            PL_VARIANTS[PL_BY_GALAXY[GALAXIES.indexOf(galaxyFor(game.depth))]] || PL_VARIANTS.soft;
+  // cols[0] is an 'rgb(r,g,b)' string (lerpColor output) — pull the channels out
+  const m = (cols[0] || '').match(/(\d+)\D+(\d+)\D+(\d+)/);
+  let c0 = m ? m[1] + ',' + m[2] + ',' + m[3] : '168,220,255';
+  if (v.warm) c0 = '255,158,92';            // forge registers warm regardless of body colour
+  // shadow crescent (clipped to the disc). flip = dark on TOP (lit by lava below),
+  // which is also the only shadow the underlit mode accepts.
+  if (!(pm && pm.mode === 'underlit') || v.flip) {
+    const dx = v.flip ? -0.32 : 0.32, dy = v.flip ? -0.4 : 0.4;
+    ctx.save();
+    ctx.beginPath(); ctx.arc(x, y, r, 0, 7); ctx.clip();
+    const shd = ctx.createRadialGradient(x - r * dx, y - r * dy, r * 0.15, x + r * dx, y + r * dy, r * 1.5);
+    shd.addColorStop(0, 'rgba(3,5,12,0)');
+    shd.addColorStop(0.42, 'rgba(3,5,12,0)');
+    shd.addColorStop(0.8, 'rgba(3,5,12,' + (v.sd * pL).toFixed(3) + ')');
+    shd.addColorStop(1, 'rgba(3,5,12,' + (v.se * pL).toFixed(3) + ')');
+    ctx.fillStyle = shd;
+    ctx.fillRect(x - r, y - r, 2 * r, 2 * r);
+    ctx.restore();
+  }
+  // limb glow hugging the edge, in the planet's own colour — additive, outside the
+  // clip so it bleeds past the edge and reads as atmosphere.
+  ctx.save();
+  ctx.globalCompositeOperation = 'lighter';
+  const rim = ctx.createRadialGradient(x, y, r * v.rw0, x, y, r * v.rw1);
+  rim.addColorStop(0, 'rgba(' + c0 + ',0)');
+  rim.addColorStop(0.55, 'rgba(' + c0 + ',' + (v.ra * pL).toFixed(3) + ')');
+  rim.addColorStop(1, 'rgba(' + c0 + ',0)');
+  ctx.fillStyle = rim;
+  ctx.beginPath(); ctx.arc(x, y, r * v.rw1, 0, 7); ctx.fill();
+  if (v.arc) {                              // lit arc on the sun side (upper-left)
+    ctx.strokeStyle = 'rgba(255,255,255,' + (0.3 * pL).toFixed(3) + ')';
+    ctx.lineWidth = Math.max(r * 0.05, 1.2);
+    ctx.beginPath(); ctx.arc(x, y, r * 0.97, Math.PI * 1.05, Math.PI * 1.55); ctx.stroke();
+  }
+  ctx.restore();
+}
+
 function drawPlanet(p) {
   const { x, y, r, type, detail } = p;
   // every world is a variant: detail tints the base gradient lighter or darker,
@@ -1744,6 +1803,7 @@ function drawPlanet(p) {
   const pm = galaxyFor(game.depth).planetMode || null;
   if (pm && (pm.mode === 'ink' || pm.mode === 'wire' || pm.mode === 'flat2' || pm.mode === 'eclipse')) {
     drawPlanetStylized(p, pm, cols);
+    planetRelight(x, y, r, cols, pm);   // stylized galaxies get the relight too (was the gap)
     return;
   }
   if (pm && (pm.mode === 'duotone' || pm.mode === 'banded' || pm.mode === 'veined')) cols = cols.map(c => lerpColor(c, pm.hex, pm.k));
@@ -1849,25 +1909,6 @@ function drawPlanet(p) {
       ctx.beginPath(); ctx.arc(x + rx2 * r, y + ry2 * r, 1.2, 0, 7); ctx.fill();
     }
   }
-  // soft-bright relight (casual): a glossy-sphere model, applied over the WHOLE disc
-  // (land + sea together) so the flat landmasses belong to the lit sphere instead of
-  // sitting on top as paint. Two parts: a FAR-SIDE SHADOW (source-over, adds shape
-  // without touching the lit face → nothing crosses the bloom threshold, no whiteout)
-  // and a TIGHT SPECULAR shine (additive hotspot, small radius → gloss, not a wash).
-  if (fxOn('planetlight') && !(pm && pm.mode === 'underlit')) {
-    const pL = LOOK.planetLight || 1;
-    // Shape by DARKENING only (never brightening) — the anti-sun side falls into a
-    // shadow crescent while the sunlit side keeps its natural tone, so the eye reads
-    // it as lit. Source-over dark can't cross the bloom threshold → no whiteout. The
-    // land masses sit under the same shadow, so they belong to the sphere.
-    const shd = ctx.createRadialGradient(x - r * 0.32, y - r * 0.36, r * 0.15, x + r * 0.32, y + r * 0.4, r * 1.5);
-    shd.addColorStop(0, 'rgba(3,5,12,0)');
-    shd.addColorStop(0.42, 'rgba(3,5,12,0)');
-    shd.addColorStop(0.8, 'rgba(3,5,12,' + (0.34 * pL).toFixed(3) + ')');
-    shd.addColorStop(1, 'rgba(3,5,12,' + (0.62 * pL).toFixed(3) + ')');
-    ctx.fillStyle = shd;
-    ctx.beginPath(); ctx.arc(x, y, r, 0, 7); ctx.fill();
-  }
   // soft limb shading (darkens the far rim; the forge flips it — dark on TOP)
   const sh = pm && pm.mode === 'underlit'
     ? ctx.createRadialGradient(x + r * 0.2, y + r * 0.55, r * 0.1, x, y, r * 1.02)
@@ -1878,27 +1919,8 @@ function drawPlanet(p) {
   sh.addColorStop(1, 'rgba(0,0,0,0.34)');
   ctx.fillStyle = sh;
   ctx.beginPath(); ctx.arc(x, y, r, 0, 7); ctx.fill();
-  ctx.restore();   // <- exits the disc clip; the atmosphere rim draws OUTSIDE it
-  // atmosphere rim: a soft glow hugging the limb in the planet's own colour,
-  // additive so it feeds the bloom. Drawn after the clip so it can bleed past the
-  // edge. Cross-galaxy — every planet mode gets it (this is what was missing).
-  if (fxOn('planetlight')) {
-    // cols[0] is an 'rgb(r,g,b)' string (lerpColor output) — pull the channels out
-    const m = (cols[0] || '').match(/(\d+)\D+(\d+)\D+(\d+)/);
-    const c0 = m ? m[1] + ',' + m[2] + ',' + m[3] : '168,220,255';
-    const ri = 0.4 * (LOOK.planetLight || 1);
-    // thin band hugging the limb — kept narrow so the bloom reads it as a crisp
-    // atmosphere edge, not a fuzzy cloud around the whole planet.
-    const rim = ctx.createRadialGradient(x, y, r * 0.9, x, y, r * 1.13);
-    rim.addColorStop(0, 'rgba(' + c0 + ',0)');
-    rim.addColorStop(0.55, 'rgba(' + c0 + ',' + ri.toFixed(3) + ')');   // peak sits on the limb
-    rim.addColorStop(1, 'rgba(' + c0 + ',0)');
-    ctx.save();
-    ctx.globalCompositeOperation = 'lighter';
-    ctx.fillStyle = rim;
-    ctx.beginPath(); ctx.arc(x, y, r * 1.2, 0, 7); ctx.fill();
-    ctx.restore();
-  }
+  ctx.restore();   // <- exits the disc clip
+  planetRelight(x, y, r, cols, pm);   // per-galaxy variant: shadow crescent + limb glow
   if (pm && pm.mode === 'underlit') {
     // lava rim light on the bottom limb — sells the forge AND guarantees the
     // collision edge stays the strongest edge on the darkest coals
