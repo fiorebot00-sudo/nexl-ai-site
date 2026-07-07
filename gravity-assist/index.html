@@ -91,7 +91,7 @@ const ASSIST_MARGIN = 26;         // pass within planet r + this = slingshot ass
 // ?fx opt-in as the bloom overlay; the fx meter tap toggles both for A/B.
 const LOOK = {
   on: /[?#&]fx/.test(location.href),
-  rev: 'C1',       // build tag: meter line 3 + quoted in chat after every deploy (Mike's cache check)
+  rev: 'C2',       // build tag: meter line 3 + quoted in chat after every deploy (Mike's cache check)
   // review-round defaults: deliberately bold so each dial is judgeable on a
   // phone, then dialed back to taste. Tuned values become the shipped ones.
   twinkle: 1,      // star brightness oscillation (0-1 of ±15%)
@@ -99,6 +99,7 @@ const LOOK = {
   parallax: 1.6,   // ship-keyed micro-parallax multiplier (0 = off; 1 = near layer ~2%)
   wash: 1.7,       // galaxy ambient light wash intensity
   vignette: 0.2,   // corner falloff max alpha (0 = off)
+  planetLight: 1,  // planet relight intensity (sunlit lift + atmosphere rim); URL &pl=
   // ---------- per-feature toggles (all default ON under ?fx) ----------
   // Every discrete effect is individually switchable so Mike can A/B any one in
   // isolation. URL: &no=launch,crash disables listed features; &only=launch runs
@@ -110,6 +111,7 @@ const LOOK = {
     shiplight: true, // B ship halo (moving focal point as a light source)
     trail: true,     // B3 trail-as-light hot core
     emissive: true,  // B2 emissive cores on wormhole / sats / rewards
+    planetlight: true, // soft-bright planet relight: sunlit lift + shaded land + atmosphere rim
     launch: true,    // C1 launch beat: squash + exhaust burst + brightness kiss
     crash: true,     // C2 crash upgrade: directional debris + ember sparks + shockwave
     escape: true,    // C3 escape garnish: radial star-streak pull near the gate
@@ -122,6 +124,8 @@ const LOOK = {
   const no = (location.href.match(/[?&]no=([a-z,]+)/) || [])[1];
   if (only) { const keep = new Set(only.split(',')); for (const k in LOOK.f) LOOK.f[k] = keep.has(k); }
   if (no) for (const k of no.split(',')) if (k in LOOK.f) LOOK.f[k] = false;
+  const pl = (location.href.match(/[?&]pl=([\d.]+)/) || [])[1];   // planet relight intensity dial
+  if (pl) LOOK.planetLight = parseFloat(pl);
 })();
 // gate helper: master ?fx on AND this feature enabled
 const fxOn = k => LOOK.on && LOOK.f[k];
@@ -1845,6 +1849,25 @@ function drawPlanet(p) {
       ctx.beginPath(); ctx.arc(x + rx2 * r, y + ry2 * r, 1.2, 0, 7); ctx.fill();
     }
   }
+  // soft-bright relight (casual): a glossy-sphere model, applied over the WHOLE disc
+  // (land + sea together) so the flat landmasses belong to the lit sphere instead of
+  // sitting on top as paint. Two parts: a FAR-SIDE SHADOW (source-over, adds shape
+  // without touching the lit face → nothing crosses the bloom threshold, no whiteout)
+  // and a TIGHT SPECULAR shine (additive hotspot, small radius → gloss, not a wash).
+  if (fxOn('planetlight') && !(pm && pm.mode === 'underlit')) {
+    const pL = LOOK.planetLight || 1;
+    // Shape by DARKENING only (never brightening) — the anti-sun side falls into a
+    // shadow crescent while the sunlit side keeps its natural tone, so the eye reads
+    // it as lit. Source-over dark can't cross the bloom threshold → no whiteout. The
+    // land masses sit under the same shadow, so they belong to the sphere.
+    const shd = ctx.createRadialGradient(x - r * 0.32, y - r * 0.36, r * 0.15, x + r * 0.32, y + r * 0.4, r * 1.5);
+    shd.addColorStop(0, 'rgba(3,5,12,0)');
+    shd.addColorStop(0.42, 'rgba(3,5,12,0)');
+    shd.addColorStop(0.8, 'rgba(3,5,12,' + (0.34 * pL).toFixed(3) + ')');
+    shd.addColorStop(1, 'rgba(3,5,12,' + (0.62 * pL).toFixed(3) + ')');
+    ctx.fillStyle = shd;
+    ctx.beginPath(); ctx.arc(x, y, r, 0, 7); ctx.fill();
+  }
   // soft limb shading (darkens the far rim; the forge flips it — dark on TOP)
   const sh = pm && pm.mode === 'underlit'
     ? ctx.createRadialGradient(x + r * 0.2, y + r * 0.55, r * 0.1, x, y, r * 1.02)
@@ -1855,7 +1878,27 @@ function drawPlanet(p) {
   sh.addColorStop(1, 'rgba(0,0,0,0.34)');
   ctx.fillStyle = sh;
   ctx.beginPath(); ctx.arc(x, y, r, 0, 7); ctx.fill();
-  ctx.restore();
+  ctx.restore();   // <- exits the disc clip; the atmosphere rim draws OUTSIDE it
+  // atmosphere rim: a soft glow hugging the limb in the planet's own colour,
+  // additive so it feeds the bloom. Drawn after the clip so it can bleed past the
+  // edge. Cross-galaxy — every planet mode gets it (this is what was missing).
+  if (fxOn('planetlight')) {
+    // cols[0] is an 'rgb(r,g,b)' string (lerpColor output) — pull the channels out
+    const m = (cols[0] || '').match(/(\d+)\D+(\d+)\D+(\d+)/);
+    const c0 = m ? m[1] + ',' + m[2] + ',' + m[3] : '168,220,255';
+    const ri = 0.4 * (LOOK.planetLight || 1);
+    // thin band hugging the limb — kept narrow so the bloom reads it as a crisp
+    // atmosphere edge, not a fuzzy cloud around the whole planet.
+    const rim = ctx.createRadialGradient(x, y, r * 0.9, x, y, r * 1.13);
+    rim.addColorStop(0, 'rgba(' + c0 + ',0)');
+    rim.addColorStop(0.55, 'rgba(' + c0 + ',' + ri.toFixed(3) + ')');   // peak sits on the limb
+    rim.addColorStop(1, 'rgba(' + c0 + ',0)');
+    ctx.save();
+    ctx.globalCompositeOperation = 'lighter';
+    ctx.fillStyle = rim;
+    ctx.beginPath(); ctx.arc(x, y, r * 1.2, 0, 7); ctx.fill();
+    ctx.restore();
+  }
   if (pm && pm.mode === 'underlit') {
     // lava rim light on the bottom limb — sells the forge AND guarantees the
     // collision edge stays the strongest edge on the darkest coals
