@@ -91,7 +91,7 @@ const ASSIST_MARGIN = 26;         // pass within planet r + this = slingshot ass
 // ?fx opt-in as the bloom overlay; the fx meter tap toggles both for A/B.
 const LOOK = {
   on: /[?#&]fx/.test(location.href),
-  rev: 'B1',       // build tag: meter line 3 + quoted in chat after every deploy (Mike's cache check)
+  rev: 'B2',       // build tag: meter line 3 + quoted in chat after every deploy (Mike's cache check)
   // review-round defaults: deliberately bold so each dial is judgeable on a
   // phone, then dialed back to taste. Tuned values become the shipped ones.
   twinkle: 1,      // star brightness oscillation (0-1 of ±15%)
@@ -1376,6 +1376,8 @@ window.addEventListener('touchmove', e => e.preventDefault(), { passive: false }
 function tick(dt) {
   if (game.state === 'flight') {
     const c = game.craft, L = game.sys.layout;
+    c.px = c.x; c.py = c.y;   // last tick's position — draw() interpolates between
+                              // ticks (render-only; physics/trail/collisions untouched)
     const [ax, ay] = accel(c.x, c.y, L.planets, L.gscale);
     c.vx += ax * dt; c.vy += ay * dt;
     c.x += c.vx * dt; c.y += c.vy * dt;
@@ -3412,20 +3414,26 @@ function draw() {
     const goldK = game.insert
       ? Math.min(Math.max((now - game.gateLockAt) / 0.35, 0), 1) * (0.85 + 0.15 * Math.sin(now * 9))
       : 0;
+    // Fixed-timestep aliasing fix: the ship is DRAWN at a position interpolated
+    // between the last two 120Hz physics states by the accumulator remainder —
+    // sub-tick smoothness at any display rate. Physics state itself untouched.
+    const tf = game.tickFrac === undefined ? 1 : game.tickFrac;
+    const rx = c.px === undefined ? c.x : c.px + (c.x - c.px) * tf;
+    const ry = c.py === undefined ? c.y : c.py + (c.y - c.py) * tf;
     // B-group ship light: the moving focal point is a light source — soft cyan
     // halo + hot center under the ship (additive, feeds the bloom bright-pass)
     if (LOOK.on) {
       ctx.save();
       ctx.globalCompositeOperation = 'lighter';
-      const hg = ctx.createRadialGradient(c.x, c.y, 0, c.x, c.y, 16);
+      const hg = ctx.createRadialGradient(rx, ry, 0, rx, ry, 16);
       hg.addColorStop(0, 'rgba(255,255,255,0.5)');
       hg.addColorStop(0.25, 'rgba(126,240,255,0.35)');
       hg.addColorStop(1, 'rgba(126,240,255,0)');
       ctx.fillStyle = hg;
-      ctx.beginPath(); ctx.arc(c.x, c.y, 16, 0, 7); ctx.fill();
+      ctx.beginPath(); ctx.arc(rx, ry, 16, 0, 7); ctx.fill();
       ctx.restore();
     }
-    drawShip(c.x, c.y, ang, true, now, 0, goldK);
+    drawShip(rx, ry, ang, true, now, 0, goldK);
   } else if (game.state === 'win' && game.winCraft && !game.winDone) {
     // entry dive: continuous with flight — same velocity at the crossing,
     // steering + acceleration carry it into the throat, fading as it goes
@@ -4170,6 +4178,7 @@ function frame(now) {
   if (game.state === 'flight' && game.tripleAt && (now - game.tripleAt) / 1000 < 0.35) ft *= 0.5;
   acc += ft;
   while (acc >= DT) { tick(DT); acc -= DT; }
+  game.tickFrac = acc / DT;   // sub-tick remainder: draw() lerps the ship px,py→x,y
   draw();
   if (fxRender) fxRender();
   requestAnimationFrame(frame);
@@ -4296,11 +4305,15 @@ let fxRender = null;
     if (set) set(p);
     drawQuad(p);
   }
-  // meter state: EMA fps + EMA upload ms, refreshed twice a second
-  let lastT = 0, fpsE = 0, upE = 0, lastMeter = 0;
+  // meter state: EMA fps + EMA upload ms + peak frame gap, refreshed twice a second
+  let lastT = 0, fpsE = 0, upE = 0, lastMeter = 0, pkMs = 0;
   fxRender = function () {
     const t0 = performance.now();
-    if (lastT) { const f = 1000 / (t0 - lastT); fpsE = fpsE ? fpsE * 0.95 + f * 0.05 : f; }
+    if (lastT) {
+      const gap = t0 - lastT;
+      if (gap > pkMs) pkMs = gap;
+      const f = 1000 / gap; fpsE = fpsE ? fpsE * 0.95 + f * 0.05 : f;
+    }
     lastT = t0;
     if (!FXP.on) {
       if (glc.style.display !== 'none') glc.style.display = 'none';
@@ -4323,8 +4336,9 @@ let fxRender = null;
     if (t0 - lastMeter > 500) {
       lastMeter = t0;
       meter.textContent = 'FX ' + (FXP.on ? 'ON' : 'OFF') + ' · tap to toggle\n' +
-        fpsE.toFixed(0) + ' fps · upload ' + upE.toFixed(1) + ' ms\n' +
+        fpsE.toFixed(0) + ' fps · up ' + upE.toFixed(1) + ' · pk ' + pkMs.toFixed(0) + ' ms\n' +
         'build ' + LOOK.rev;
+      pkMs = 0;
     }
   };
 })();
