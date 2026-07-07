@@ -91,7 +91,7 @@ const ASSIST_MARGIN = 26;         // pass within planet r + this = slingshot ass
 // ?fx opt-in as the bloom overlay; the fx meter tap toggles both for A/B.
 const LOOK = {
   on: /[?#&]fx/.test(location.href),
-  rev: 'C6',       // build tag: meter line 3 + quoted in chat after every deploy (Mike's cache check)
+  rev: 'C7',       // build tag: meter line 3 + quoted in chat after every deploy (Mike's cache check)
   // review-round defaults: deliberately bold so each dial is judgeable on a
   // phone, then dialed back to taste. Tuned values become the shipped ones.
   twinkle: 1,      // star brightness oscillation (0-1 of ±15%)
@@ -1751,6 +1751,29 @@ function drawPlanetStylized(p, pm, cols) {
   ctx.restore();
 }
 
+// ---------- glow sprites (perf: gradients are expensive to CREATE per frame) ----------
+// Radial-gradient glows that move every frame (ship halo, hero stars, sat cores)
+// are pre-rendered ONCE into small offscreen canvases and stamped with drawImage —
+// the C-series jitter on iPhone was per-frame gradient creation churning the GC.
+function glowSprite(R, stops) {
+  const c = document.createElement('canvas');
+  c.width = c.height = R * 2;
+  const g = c.getContext('2d');
+  const gr = g.createRadialGradient(R, R, 0, R, R, R);
+  for (const [o, col] of stops) gr.addColorStop(o, col);
+  g.fillStyle = gr;
+  g.fillRect(0, 0, R * 2, R * 2);
+  return c;
+}
+const SPRITES = {
+  // ship halo: white core → cyan falloff (alpha baked at draw-time values)
+  ship: glowSprite(32, [[0, 'rgba(255,255,255,0.5)'], [0.25, 'rgba(126,240,255,0.35)'], [1, 'rgba(126,240,255,0)']]),
+  // hero star: white-hot core → cool blue; baked at alpha 1, scaled by globalAlpha
+  hero: glowSprite(32, [[0, 'rgba(255,255,255,1)'], [0.35, 'rgba(190,222,255,0.31)'], [1, 'rgba(190,222,255,0)']]),
+  // sat emissive: gold breath; baked at alpha 1, scaled by globalAlpha
+  sat: glowSprite(32, [[0, 'rgba(255,209,102,1)'], [1, 'rgba(255,209,102,0)']]),
+};
+
 // ---------- planet relight (soft-bright family, per-galaxy VARIATION) ----------
 // Mike 2026-07-07: run the relight across the entire set WITH variation — options
 // to evaluate, room to play. Five treatments, assigned per galaxy below. All shape
@@ -1766,27 +1789,40 @@ const PL_VARIANTS = {
 };
 // galaxy index → variant (order matches GALAXIES; laps wrap via galaxyFor)
 const PL_BY_GALAXY = ['soft', 'haze', 'edge', 'rim', 'haze', 'soft', 'edge', 'ember', 'rim', 'ember', 'rim'];
-function planetRelight(x, y, r, cols, pm) {
+function planetRelight(x, y, r, cols, pm, host) {
   if (!fxOn('planetlight')) return;
   const pL = LOOK.planetLight || 1;
-  const v = PL_VARIANTS[LOOK.planetVariant] ||
-            PL_VARIANTS[PL_BY_GALAXY[GALAXIES.indexOf(galaxyFor(game.depth))]] || PL_VARIANTS.soft;
-  // cols[0] is an 'rgb(r,g,b)' string (lerpColor output) — pull the channels out
-  const m = (cols[0] || '').match(/(\d+)\D+(\d+)\D+(\d+)/);
-  let c0 = m ? m[1] + ',' + m[2] + ',' + m[3] : '168,220,255';
-  if (v.warm) c0 = '255,158,92';            // forge registers warm regardless of body colour
-  // shadow crescent (clipped to the disc). flip = dark on TOP (lit by lava below),
-  // which is also the only shadow the underlit mode accepts.
-  if (!(pm && pm.mode === 'underlit') || v.flip) {
+  const vn = LOOK.planetVariant && PL_VARIANTS[LOOK.planetVariant] ? LOOK.planetVariant
+           : (PL_BY_GALAXY[GALAXIES.indexOf(galaxyFor(game.depth))] || 'soft');
+  const v = PL_VARIANTS[vn];
+  // PERF: planets never move within a system — cache both gradients on the planet
+  // object, keyed by variant/intensity/geometry, instead of re-creating per frame
+  // (per-frame gradient churn was the C-series iPhone jitter).
+  const key = vn + '|' + pL + '|' + (x | 0) + '|' + (y | 0) + '|' + (r | 0) + '|' + cols[0];
+  let cch = host && host._rl && host._rl.key === key ? host._rl : null;
+  if (!cch) {
+    const m = (cols[0] || '').match(/(\d+)\D+(\d+)\D+(\d+)/);
+    let c0 = m ? m[1] + ',' + m[2] + ',' + m[3] : '168,220,255';
+    if (v.warm) c0 = '255,158,92';          // forge registers warm regardless of body colour
     const dx = v.flip ? -0.32 : 0.32, dy = v.flip ? -0.4 : 0.4;
-    ctx.save();
-    ctx.beginPath(); ctx.arc(x, y, r, 0, 7); ctx.clip();
     const shd = ctx.createRadialGradient(x - r * dx, y - r * dy, r * 0.15, x + r * dx, y + r * dy, r * 1.5);
     shd.addColorStop(0, 'rgba(3,5,12,0)');
     shd.addColorStop(0.42, 'rgba(3,5,12,0)');
     shd.addColorStop(0.8, 'rgba(3,5,12,' + (v.sd * pL).toFixed(3) + ')');
     shd.addColorStop(1, 'rgba(3,5,12,' + (v.se * pL).toFixed(3) + ')');
-    ctx.fillStyle = shd;
+    const rim = ctx.createRadialGradient(x, y, r * v.rw0, x, y, r * v.rw1);
+    rim.addColorStop(0, 'rgba(' + c0 + ',0)');
+    rim.addColorStop(0.55, 'rgba(' + c0 + ',' + (v.ra * pL).toFixed(3) + ')');
+    rim.addColorStop(1, 'rgba(' + c0 + ',0)');
+    cch = { key, shd, rim };
+    if (host) host._rl = cch;
+  }
+  // shadow crescent (clipped to the disc). flip = dark on TOP (lit by lava below),
+  // which is also the only shadow the underlit mode accepts.
+  if (!(pm && pm.mode === 'underlit') || v.flip) {
+    ctx.save();
+    ctx.beginPath(); ctx.arc(x, y, r, 0, 7); ctx.clip();
+    ctx.fillStyle = cch.shd;
     ctx.fillRect(x - r, y - r, 2 * r, 2 * r);
     ctx.restore();
   }
@@ -1794,11 +1830,7 @@ function planetRelight(x, y, r, cols, pm) {
   // clip so it bleeds past the edge and reads as atmosphere.
   ctx.save();
   ctx.globalCompositeOperation = 'lighter';
-  const rim = ctx.createRadialGradient(x, y, r * v.rw0, x, y, r * v.rw1);
-  rim.addColorStop(0, 'rgba(' + c0 + ',0)');
-  rim.addColorStop(0.55, 'rgba(' + c0 + ',' + (v.ra * pL).toFixed(3) + ')');
-  rim.addColorStop(1, 'rgba(' + c0 + ',0)');
-  ctx.fillStyle = rim;
+  ctx.fillStyle = cch.rim;
   ctx.beginPath(); ctx.arc(x, y, r * v.rw1, 0, 7); ctx.fill();
   if (v.arc) {                              // lit arc on the sun side (upper-left)
     ctx.strokeStyle = 'rgba(255,255,255,' + (0.3 * pL).toFixed(3) + ')';
@@ -1819,7 +1851,7 @@ function drawPlanet(p) {
   const pm = galaxyFor(game.depth).planetMode || null;
   if (pm && (pm.mode === 'ink' || pm.mode === 'wire' || pm.mode === 'flat2' || pm.mode === 'eclipse')) {
     drawPlanetStylized(p, pm, cols);
-    planetRelight(x, y, r, cols, pm);   // stylized galaxies get the relight too (was the gap)
+    planetRelight(x, y, r, cols, pm, p);   // stylized galaxies get the relight too (was the gap)
     return;
   }
   if (pm && (pm.mode === 'duotone' || pm.mode === 'banded' || pm.mode === 'veined')) cols = cols.map(c => lerpColor(c, pm.hex, pm.k));
@@ -1936,7 +1968,7 @@ function drawPlanet(p) {
   ctx.fillStyle = sh;
   ctx.beginPath(); ctx.arc(x, y, r, 0, 7); ctx.fill();
   ctx.restore();   // <- exits the disc clip
-  planetRelight(x, y, r, cols, pm);   // per-galaxy variant: shadow crescent + limb glow
+  planetRelight(x, y, r, cols, pm, p);   // per-galaxy variant: shadow crescent + limb glow
   if (pm && pm.mode === 'underlit') {
     // lava rim light on the bottom limb — sells the forge AND guarantees the
     // collision edge stays the strongest edge on the darkest coals
@@ -2047,14 +2079,11 @@ function drawSat(sx, sy, now) {
   // light source and feeds the bloom bright-pass.
   if (fxOn('ambient')) sy += 1.5 * Math.sin(now * 1.6 + sx * 0.05);
   if (fxOn('emissive')) {
+    // sprite-stamped (perf): breathe rides globalAlpha instead of a fresh gradient
     ctx.save();
     ctx.globalCompositeOperation = 'lighter';
-    const eb = 0.16 + 0.06 * Math.sin(now * 5);
-    const eg = ctx.createRadialGradient(sx, sy, 0, sx, sy, 15);
-    eg.addColorStop(0, 'rgba(255,209,102,' + eb.toFixed(3) + ')');
-    eg.addColorStop(1, 'rgba(255,209,102,0)');
-    ctx.fillStyle = eg;
-    ctx.beginPath(); ctx.arc(sx, sy, 15, 0, 7); ctx.fill();
+    ctx.globalAlpha = 0.16 + 0.06 * Math.sin(now * 5);
+    ctx.drawImage(SPRITES.sat, sx - 15, sy - 15, 30, 30);
     ctx.restore();
   }
   ctx.save();
@@ -3187,11 +3216,16 @@ function draw() {
   // hue — "the launch site has a light source". Screen space, behind everything.
   if (fxOn('wash') && LOOK.wash) {
     const cw = canvas.width, ch = canvas.height;
-    const wg = ctx.createRadialGradient(cw / 2, ch * 1.08, ch * 0.05, cw / 2, ch * 1.08, ch * 0.85);
-    wg.addColorStop(0, 'rgba(' + galaxy.decor.hues[0] + ',' + (0.10 * LOOK.wash * dim).toFixed(3) + ')');
-    wg.addColorStop(0.55, 'rgba(' + galaxy.decor.hues[0] + ',' + (0.035 * LOOK.wash * dim).toFixed(3) + ')');
-    wg.addColorStop(1, 'rgba(' + galaxy.decor.hues[0] + ',0)');
-    ctx.fillStyle = wg;
+    // gradient cached per galaxy/dim/size (perf) — static within a system
+    const wk = galaxy.decor.hues[0] + '|' + dim.toFixed(3) + '|' + cw + 'x' + ch + '|' + LOOK.wash;
+    if (draw.washKey !== wk) {
+      const wg = ctx.createRadialGradient(cw / 2, ch * 1.08, ch * 0.05, cw / 2, ch * 1.08, ch * 0.85);
+      wg.addColorStop(0, 'rgba(' + galaxy.decor.hues[0] + ',' + (0.10 * LOOK.wash * dim).toFixed(3) + ')');
+      wg.addColorStop(0.55, 'rgba(' + galaxy.decor.hues[0] + ',' + (0.035 * LOOK.wash * dim).toFixed(3) + ')');
+      wg.addColorStop(1, 'rgba(' + galaxy.decor.hues[0] + ',0)');
+      draw.washG = wg; draw.washKey = wk;
+    }
+    ctx.fillStyle = draw.washG;
     ctx.fillRect(0, 0, cw, ch);
   }
 
@@ -3254,16 +3288,13 @@ function draw() {
         // A1/A2 bolder round (Mike: "don't want to forget stars"): hero stars get
         // a white-hot core + additive halo big enough to survive the ¼-res bright
         // pass and to show parallax on a phone. Slow twinkle on the halo only.
+        // Sprite-stamped (perf) — the gradient ratios are baked, alpha rides globalAlpha.
         const tw = 1 - 0.22 * LOOK.twinkle * (0.5 + 0.5 * Math.sin(now * 1.3 + i * 2.399));
         ctx.save();
         ctx.globalCompositeOperation = 'lighter';
         const hr = s.r * 3.4;
-        const hgr = ctx.createRadialGradient(sx, sy, 0, sx, sy, hr);
-        hgr.addColorStop(0, 'rgba(255,255,255,' + (sa * 1.6 * tw).toFixed(3) + ')');
-        hgr.addColorStop(0.35, 'rgba(190,222,255,' + (sa * 0.5 * tw).toFixed(3) + ')');
-        hgr.addColorStop(1, 'rgba(190,222,255,0)');
-        ctx.fillStyle = hgr;
-        ctx.beginPath(); ctx.arc(sx, sy, hr, 0, 7); ctx.fill();
+        ctx.globalAlpha = Math.min(sa * 1.6 * tw, 1);
+        ctx.drawImage(SPRITES.hero, sx - hr, sy - hr, hr * 2, hr * 2);
         ctx.globalAlpha = Math.min(sa * 1.4 * tw, 0.6);
         ctx.fillStyle = '#fff';
         ctx.beginPath(); ctx.arc(sx, sy, s.r * 0.9, 0, 7); ctx.fill();
@@ -3666,14 +3697,10 @@ function draw() {
     // B-group ship light: the moving focal point is a light source — soft cyan
     // halo + hot center under the ship (additive, feeds the bloom bright-pass)
     if (fxOn('shiplight')) {
+      // pre-rendered sprite (perf): identical glow, no per-frame gradient creation
       ctx.save();
       ctx.globalCompositeOperation = 'lighter';
-      const hg = ctx.createRadialGradient(rx, ry, 0, rx, ry, 16);
-      hg.addColorStop(0, 'rgba(255,255,255,0.5)');
-      hg.addColorStop(0.25, 'rgba(126,240,255,0.35)');
-      hg.addColorStop(1, 'rgba(126,240,255,0)');
-      ctx.fillStyle = hg;
-      ctx.beginPath(); ctx.arc(rx, ry, 16, 0, 7); ctx.fill();
+      ctx.drawImage(SPRITES.ship, rx - 16, ry - 16, 32, 32);
       ctx.restore();
     }
     // C1 launch stretch: ship elongates along flight for ~0.16s after ignition,
@@ -4470,7 +4497,9 @@ function frame(now) {
   // C4 slow-mo desat pulse: GPU-composited CSS filter (iOS-safe full-frame path).
   // Pulls ~18% saturation + a hair of contrast as slow-mo deepens; snaps back off.
   const wantDesat = fxOn('slowmo') && (game.slowK || 0) > 0.01;
-  const dk = wantDesat ? game.slowK : 0;
+  // quantized to 0.05 steps: a style.filter write forces a GPU filter rebuild on
+  // iOS — per-frame writes during the slow-mo ramp read as jitter near the gate
+  const dk = wantDesat ? Math.round(game.slowK * 20) / 20 : 0;
   if (dk !== frame.lastDk) {
     canvas.style.filter = dk > 0 ? 'saturate(' + (1 - 0.18 * dk).toFixed(3) + ') contrast(' + (1 + 0.05 * dk).toFixed(3) + ')' : '';
     frame.lastDk = dk;
