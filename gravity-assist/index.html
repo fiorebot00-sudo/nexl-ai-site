@@ -91,7 +91,7 @@ const ASSIST_MARGIN = 26;         // pass within planet r + this = slingshot ass
 // ?fx opt-in as the bloom overlay; the fx meter tap toggles both for A/B.
 const LOOK = {
   on: /[?#&]fx/.test(location.href),
-  rev: 'C10',     // build tag: meter line 3 + quoted in chat after every deploy (Mike's cache check)
+  rev: 'C11',     // build tag: meter line 3 + quoted in chat after every deploy (Mike's cache check)
   // review-round defaults: deliberately bold so each dial is judgeable on a
   // phone, then dialed back to taste. Tuned values become the shipped ones.
   twinkle: 1,      // star brightness oscillation (0-1 of ±15%)
@@ -1788,11 +1788,14 @@ const SPRITES = {
 // thin limb glow is additive, and it's meant to feed the bloom as a crisp edge.
 // Force one everywhere with ?fx&plv=<name>; intensity rides &pl= as before.
 const PL_VARIANTS = {
-  soft:  { sd: 0.34, se: 0.62, rw0: 0.90, rw1: 1.13, ra: 0.40 },              // C2 look: shadow + thin rim
-  rim:   { sd: 0.45, se: 0.75, rw0: 0.88, rw1: 1.18, ra: 0.62 },              // deeper shade, hot rim (premium lean)
-  haze:  { sd: 0.20, se: 0.38, rw0: 0.92, rw1: 1.38, ra: 0.30 },              // wide dreamy atmosphere
-  edge:  { sd: 0.38, se: 0.66, rw0: 0.90, rw1: 1.12, ra: 0.28, arc: true },   // + lit arc on the sun side
-  ember: { sd: 0.30, se: 0.55, rw0: 0.90, rw1: 1.16, ra: 0.50, flip: true, warm: true }, // forge: dark top, warm glow
+  // tl = atmosphere tail length (in r units past rw1): C11 softer fade — the glow
+  // used to hit zero ~0.1r past the limb (a crisp ring); now it trails off over an
+  // eased tail whose length varies per variant AND per planet (detail-driven).
+  soft:  { sd: 0.34, se: 0.62, rw0: 0.90, rw1: 1.13, ra: 0.40, tl: 0.30 },    // C2 look: shadow + thin rim
+  rim:   { sd: 0.45, se: 0.75, rw0: 0.88, rw1: 1.18, ra: 0.62, tl: 0.22 },    // deeper shade, hot rim (premium lean)
+  haze:  { sd: 0.20, se: 0.38, rw0: 0.92, rw1: 1.38, ra: 0.30, tl: 0.55 },    // wide dreamy atmosphere
+  edge:  { sd: 0.38, se: 0.66, rw0: 0.90, rw1: 1.12, ra: 0.28, tl: 0.25, arc: true },   // + lit arc on the sun side
+  ember: { sd: 0.30, se: 0.55, rw0: 0.90, rw1: 1.16, ra: 0.50, tl: 0.35, flip: true, warm: true }, // forge: dark top, warm glow
 };
 // galaxy index → variant (order matches GALAXIES; laps wrap via galaxyFor)
 const PL_BY_GALAXY = ['soft', 'haze', 'edge', 'rim', 'haze', 'soft', 'edge', 'ember', 'rim', 'ember', 'rim'];
@@ -1817,11 +1820,20 @@ function planetRelight(x, y, r, cols, pm, host) {
     shd.addColorStop(0.42, 'rgba(3,5,12,0)');
     shd.addColorStop(0.8, 'rgba(3,5,12,' + (v.sd * pL).toFixed(3) + ')');
     shd.addColorStop(1, 'rgba(3,5,12,' + (v.se * pL).toFixed(3) + ')');
-    const rim = ctx.createRadialGradient(x, y, r * v.rw0, x, y, r * v.rw1);
+    // atmosphere fade (C11): peak stays at the limb, then an eased tail into space.
+    // Tail length = variant character x per-planet variation (detail), so no two
+    // atmospheres fall off identically. Tail sits over dark space → bloom-safe.
+    const dv = host && host.detail != null ? host.detail : 0.5;
+    const ext = v.rw1 + (v.tl || 0.3) * (0.7 + 0.6 * dv);
+    const tpk = (v.rw0 + 0.55 * (v.rw1 - v.rw0) - v.rw0) / (ext - v.rw0);   // old peak radius, new gradient space
+    const A = v.ra * pL * (0.92 + 0.16 * dv);
+    const rim = ctx.createRadialGradient(x, y, r * v.rw0, x, y, r * ext);
     rim.addColorStop(0, 'rgba(' + c0 + ',0)');
-    rim.addColorStop(0.55, 'rgba(' + c0 + ',' + (v.ra * pL).toFixed(3) + ')');
+    rim.addColorStop(tpk, 'rgba(' + c0 + ',' + A.toFixed(3) + ')');
+    rim.addColorStop(tpk + (1 - tpk) * 0.35, 'rgba(' + c0 + ',' + (A * 0.42).toFixed(3) + ')');
+    rim.addColorStop(tpk + (1 - tpk) * 0.70, 'rgba(' + c0 + ',' + (A * 0.13).toFixed(3) + ')');
     rim.addColorStop(1, 'rgba(' + c0 + ',0)');
-    cch = { key, shd, rim };
+    cch = { key, shd, rim, ext };
     if (host) host._rl = cch;
   }
   // shadow crescent (clipped to the disc). flip = dark on TOP (lit by lava below),
@@ -1838,7 +1850,7 @@ function planetRelight(x, y, r, cols, pm, host) {
   ctx.save();
   ctx.globalCompositeOperation = 'lighter';
   ctx.fillStyle = cch.rim;
-  ctx.beginPath(); ctx.arc(x, y, r * v.rw1, 0, 7); ctx.fill();
+  ctx.beginPath(); ctx.arc(x, y, r * (cch.ext || v.rw1), 0, 7); ctx.fill();
   if (v.arc) {                              // lit arc on the sun side (upper-left)
     ctx.strokeStyle = 'rgba(255,255,255,' + (0.3 * pL).toFixed(3) + ')';
     ctx.lineWidth = Math.max(r * 0.05, 1.2);
