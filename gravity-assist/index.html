@@ -91,7 +91,7 @@ const ASSIST_MARGIN = 26;         // pass within planet r + this = slingshot ass
 // ?fx opt-in as the bloom overlay; the fx meter tap toggles both for A/B.
 const LOOK = {
   on: /[?#&]fx/.test(location.href),
-  rev: 'C15',     // build tag: meter line 3 + quoted in chat after every deploy (Mike's cache check)
+  rev: 'C16',     // build tag: meter line 3 + quoted in chat after every deploy (Mike's cache check)
   // review-round defaults: deliberately bold so each dial is judgeable on a
   // phone, then dialed back to taste. Tuned values become the shipped ones.
   twinkle: 1,      // star brightness oscillation (0-1 of ±15%)
@@ -187,7 +187,9 @@ const GALAXIES = [
     decor: { nebula: 0.55, oort: 0.10, hues: ['150,170,225', '120,150,205', '170,190,235'], aMin: 0.04, aMax: 0.08 },
     stars: { density: 1.0, alpha: 0.95 },
     planets: { uranus: 3, neptune: 3, earth: 2, mercury: 1, saturn: 1 },
-    ambient: { pNat: 0.45, pUnnat: 0.15, naturals: ['comet', 'comet', 'galaxy', 'aurora'], unnaturals: ['voyager', 'sail'] },
+    // C16 (Mike): aurora ribbon pulled from THIS galaxy's rotation — the horizontal
+    // wavy band fought the vertical column architecture; aurora stays elsewhere
+    ambient: { pNat: 0.45, pUnnat: 0.15, naturals: ['comet', 'comet', 'galaxy', 'comet'], unnaturals: ['voyager', 'sail'] },
     signature: 'cathedral',
     // B2 Nebula Cathedral (D-adr-036) — vertical gas-column architecture over a cool
     // blue-grey void (replaced the underwater god-rays/kelp/bubbles)
@@ -3025,7 +3027,8 @@ function drawSignature(b, depth, sigT, dim) {
     for (let i = 0; i < 7; i++) {
       const x = -60 + i * 92 + Math.sin(sigT * 0.12 + i) * 6, w = 46 + rng() * 28;
       const rg = ctx.createLinearGradient(x, 0, x + w, VH);
-      rg.addColorStop(0, 'rgba(120,150,205,0)'); rg.addColorStop(0.5, 'rgba(120,150,205,0.07)'); rg.addColorStop(1, 'rgba(120,150,205,0)');
+      // C16: god-ray columns dimmed 0.07 -> 0.045 (Mike: less bright)
+      rg.addColorStop(0, 'rgba(120,150,205,0)'); rg.addColorStop(0.5, 'rgba(120,150,205,0.045)'); rg.addColorStop(1, 'rgba(120,150,205,0)');
       ctx.fillStyle = rg;
       ctx.beginPath(); ctx.moveTo(x, 0); ctx.quadraticCurveTo(x + w * 0.7, VH * 0.38, x + w, VH);
       ctx.lineTo(x + w + 34, VH); ctx.quadraticCurveTo(x + w * 0.8, VH * 0.38, x + 20, 0); ctx.fill();
