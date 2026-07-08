@@ -91,7 +91,7 @@ const ASSIST_MARGIN = 26;         // pass within planet r + this = slingshot ass
 // ?fx opt-in as the bloom overlay; the fx meter tap toggles both for A/B.
 const LOOK = {
   on: /[?#&]fx/.test(location.href),
-  rev: 'C11',     // build tag: meter line 3 + quoted in chat after every deploy (Mike's cache check)
+  rev: 'C12',     // build tag: meter line 3 + quoted in chat after every deploy (Mike's cache check)
   // review-round defaults: deliberately bold so each dial is judgeable on a
   // phone, then dialed back to taste. Tuned values become the shipped ones.
   twinkle: 1,      // star brightness oscillation (0-1 of ±15%)
@@ -3260,6 +3260,20 @@ function draw() {
   ctx.setTransform(scale, 0, 0, scale, ox + shx * scale, oy + shy * scale);
 
   const S = game.sys;
+  // C12: each galaxy gets its own hero CONSTELLATION — positions are a pure hash
+  // of (galaxy index, star index), so they're stationary within a galaxy and
+  // identical every visit/reload, but rearrange at every galaxy crossing.
+  const gIdx = GALAXIES.indexOf(galaxy);
+  if (draw.heroGal !== gIdx) {
+    draw.heroGal = gIdx;
+    const h = (i, k) => { const s = Math.sin(gIdx * 127.1 + i * 311.7 + k * 74.7) * 43758.5453; return s - Math.floor(s); };
+    let hi = 0;
+    for (const st of STAR_LAYERS[0].stars) if (st.hero) {
+      st.x = (0.06 + ((hi * 0.618 + h(hi, 1) * 0.25) % 1) * 0.88) * VW;  // golden-ratio spread + jitter
+      st.y = (0.05 + h(hi, 2) * 0.72) * VH;                              // keep clear of the ground band
+      hi++;
+    }
+  }
   // A1 star tint: pull the field toward the galaxy's primary hue (LOOK.tint of
   // the way from the neutral #cfe0ff). Base 207,224,255; hues are 'r,g,b'.
   const starsOn = fxOn('stars');
