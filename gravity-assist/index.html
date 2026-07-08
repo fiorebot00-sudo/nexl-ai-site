@@ -91,7 +91,7 @@ const ASSIST_MARGIN = 26;         // pass within planet r + this = slingshot ass
 // ?fx opt-in as the bloom overlay; the fx meter tap toggles both for A/B.
 const LOOK = {
   on: /[?#&]fx/.test(location.href),
-  rev: 'C8',       // build tag: meter line 3 + quoted in chat after every deploy (Mike's cache check)
+  rev: 'C9',     // build tag: meter line 3 + quoted in chat after every deploy (Mike's cache check)
   // review-round defaults: deliberately bold so each dial is judgeable on a
   // phone, then dialed back to taste. Tuned values become the shipped ones.
   twinkle: 1,      // star brightness oscillation (0-1 of ±15%)
@@ -3260,23 +3260,30 @@ function draw() {
   // A2 ship-keyed micro-parallax: in flight the layers lean fractionally away
   // from the ship's offset from center — a depth cue, not a camera. Layer
   // factor scales with drift speed (near layer = strongest, ~2% of offset).
-  let plx = 0, ply = 0;
+  let ptx = 0, pty = 0;
   if (starsOn && LOOK.parallax && game.state === 'flight' && game.craft) {
-    plx = (game.craft.x - VW / 2) * 0.02 * LOOK.parallax;
-    ply = (game.craft.y - VH / 2) * 0.02 * LOOK.parallax;
+    ptx = (game.craft.x - VW / 2) * 0.02 * LOOK.parallax;
+    pty = (game.craft.y - VH / 2) * 0.02 * LOOK.parallax;
   }
+  // C9: the offset used to exist only in-flight, so it SNAPPED 0→full the frame
+  // a fling started and full→0 on crash/wormhole — the whole sky jumped at every
+  // state change. Ease toward the target instead (~120ms settle, frame-rate
+  // independent), so launches lean the sky and endings let it glide home.
+  const pdt = Math.min(now - (draw.plT || now), 0.1); draw.plT = now;
+  const pk = 1 - Math.exp(-pdt * 9);
+  const plx = draw.plx = (draw.plx || 0) + (ptx - (draw.plx || 0)) * pk;
+  const ply = draw.ply = (draw.ply || 0) + (pty - (draw.ply || 0)) * pk;
   for (const L of STAR_LAYERS) {
     const pf = L.speed / 26;   // 26 = fastest layer's speed
     for (let i = 0; i < L.stars.length; i++) {
       const s = L.stars[i];
       // galaxy star tuning: deterministic density thinning + alpha scale (heroes exempt)
       if (!s.hero && (i % 20) >= galaxy.stars.density * 20) continue;
-      // heroes read as FOREGROUND stars: they take 1.5x parallax (more than the
-      // fastest dust layer) so the flight lean is actually visible on them —
-      // they lived in the slowest layer, which had buried the A2 effect.
-      const pf2 = s.hero ? 1.5 : pf;
-      const sx = ((s.x - plx * pf2) % VW + VW) % VW;
-      const sy = ((s.y + now * L.speed - ply * pf2) % VH + VH) % VH;
+      // C9: heroes are STATIONARY — no drift, no parallax (Mike's call after C8's
+      // 1.5x-parallax heroes read as the sky jumping at launch/crash/wormhole).
+      // Fixed anchors sell "distant landmark"; the faint dust keeps all motion.
+      const sx = s.hero ? s.x : ((s.x - plx * pf) % VW + VW) % VW;
+      const sy = s.hero ? s.y : ((s.y + now * L.speed - ply * pf) % VH + VH) % VH;
       let sa = s.hero ? s.a : Math.min(s.a * galaxy.stars.alpha * dim, 0.55);
       // A1 twinkle: gentle per-star phase; heroes stay steady (the last lights)
       if (starsOn && LOOK.twinkle && !s.hero)
