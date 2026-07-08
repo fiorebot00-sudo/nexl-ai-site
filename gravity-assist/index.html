@@ -91,7 +91,7 @@ const ASSIST_MARGIN = 26;         // pass within planet r + this = slingshot ass
 // ?fx opt-in as the bloom overlay; the fx meter tap toggles both for A/B.
 const LOOK = {
   on: /[?#&]fx/.test(location.href),
-  rev: 'C12',     // build tag: meter line 3 + quoted in chat after every deploy (Mike's cache check)
+  rev: 'C13',     // build tag: meter line 3 + quoted in chat after every deploy (Mike's cache check)
   // review-round defaults: deliberately bold so each dial is judgeable on a
   // phone, then dialed back to taste. Tuned values become the shipped ones.
   twinkle: 1,      // star brightness oscillation (0-1 of ±15%)
@@ -3497,21 +3497,77 @@ function draw() {
   ctx.moveTo(PAD.x - 28, 750); ctx.lineTo(PAD.x - 24, 740);
   ctx.moveTo(PAD.x - 20, 750); ctx.lineTo(PAD.x - 24, 740);
   ctx.stroke();
-  // launch telemetry below the platform: live while aiming, last shot otherwise
+  // launch telemetry: C13 dial cluster, bottom-right console (Mike \u2014 was centered
+  // text under the pad). Live while aiming, last shot otherwise. Flat strokes and
+  // fills only, no per-frame gradients (C7 rule).
   if (game.state === 'aim') {
     const tv = (game.drag && game.previewVel) ? game.previewVel : game.lastShot;
     if (tv) {
       const live = !!(game.drag && game.previewVel);
       const spd = Math.hypot(tv.vx, tv.vy);
       const angDeg = (Math.atan2(-tv.vy, tv.vx) * 180 / Math.PI + 360) % 360;
-      const thr = Math.round(Math.min((spd - MIN_V) / (MAX_V - MIN_V), 1) * 100);
+      const thrF = Math.max(Math.min((spd - MIN_V) / (MAX_V - MIN_V), 1), 0);
+      const col = live ? '#7ef0ff' : '#8fa2c8';
+      const px0 = 306, px1 = 442, py = 738, ph = 58;
+      ctx.save();
+      ctx.globalAlpha = live ? 1 : 0.75;
+      // chamfered console panel
+      ctx.fillStyle = 'rgba(8,12,20,0.72)';
+      ctx.strokeStyle = 'rgba(74,85,99,0.9)'; ctx.lineWidth = 1;
+      ctx.beginPath();
+      ctx.moveTo(px0 + 6, py); ctx.lineTo(px1 - 6, py); ctx.lineTo(px1, py + 6);
+      ctx.lineTo(px1, py + ph - 6); ctx.lineTo(px1 - 6, py + ph); ctx.lineTo(px0 + 6, py + ph);
+      ctx.lineTo(px0, py + ph - 6); ctx.lineTo(px0, py + 6); ctx.closePath();
+      ctx.fill(); ctx.stroke();
+      ctx.textAlign = 'right';
+      ctx.font = '600 7px Oxanium, -apple-system, sans-serif';
+      ctx.fillStyle = col;
+      ctx.fillText(live ? 'LIVE' : 'LAST', px1 - 5, py + 8);
+      const dy = py + 27;                          // dial centers
+      const a0 = Math.PI * 0.75, sw = Math.PI * 1.5;   // 270-degree speedometer sweep
+      const gauge = (cx, frac) => {                // track + progress arc + needle + hub
+        ctx.lineWidth = 2; ctx.strokeStyle = '#3c4654';
+        ctx.beginPath(); ctx.arc(cx, dy, 13, a0, a0 + sw); ctx.stroke();
+        ctx.strokeStyle = col; ctx.globalAlpha = (live ? 1 : 0.75) * 0.5;
+        ctx.beginPath(); ctx.arc(cx, dy, 13, a0, a0 + sw * frac); ctx.stroke();
+        ctx.globalAlpha = live ? 1 : 0.75;
+        const na = a0 + sw * frac;
+        ctx.lineWidth = 1.5;
+        ctx.beginPath(); ctx.moveTo(cx, dy);
+        ctx.lineTo(cx + Math.cos(na) * 10, dy + Math.sin(na) * 10); ctx.stroke();
+        ctx.fillStyle = col;
+        ctx.beginPath(); ctx.arc(cx, dy, 1.6, 0, 7); ctx.fill();
+      };
+      const c1 = 332, c2 = 374, c3 = 416;
+      // compass dial: needle points the actual launch direction
+      ctx.lineWidth = 1; ctx.strokeStyle = '#3c4654';
+      ctx.beginPath(); ctx.arc(c1, dy, 13, 0, 7); ctx.stroke();
+      for (let q = 0; q < 4; q++) {                // cardinal ticks
+        const qa = q * Math.PI / 2;
+        ctx.beginPath();
+        ctx.moveTo(c1 + Math.cos(qa) * 10.5, dy + Math.sin(qa) * 10.5);
+        ctx.lineTo(c1 + Math.cos(qa) * 13, dy + Math.sin(qa) * 13);
+        ctx.stroke();
+      }
+      const ar = angDeg * Math.PI / 180;
+      ctx.strokeStyle = col; ctx.lineWidth = 1.5;
+      ctx.beginPath(); ctx.moveTo(c1, dy);
+      ctx.lineTo(c1 + Math.cos(ar) * 11, dy - Math.sin(ar) * 11); ctx.stroke();
+      ctx.fillStyle = col;
+      ctx.beginPath(); ctx.arc(c1, dy, 1.6, 0, 7); ctx.fill();
+      gauge(c2, Math.min(spd / MAX_V, 1));
+      gauge(c3, thrF);
+      // labels + readouts (values stay big-ish \u2014 phone readability, Mike)
       ctx.textAlign = 'center';
-      // 15px (was 11) \u2014 Mike: telemetry too small to read on the phone
-      ctx.font = '600 15px Oxanium, -apple-system, sans-serif';
-      ctx.globalAlpha = live ? 0.95 : 0.6;
-      ctx.fillStyle = live ? '#7ef0ff' : '#8fa2c8';
-      ctx.fillText((live ? '' : 'LAST   ') + '\u2220 ' + angDeg.toFixed(1) + '\u00b0   V ' + Math.round(spd) + '   THR ' + thr + '%', PAD.x, VH - 4);
-      ctx.globalAlpha = 1;
+      ctx.font = '600 7px Oxanium, -apple-system, sans-serif';
+      ctx.fillStyle = '#8fa2c8';
+      ctx.fillText('ANG', c1, py + 46); ctx.fillText('VEL', c2, py + 46); ctx.fillText('THR', c3, py + 46);
+      ctx.font = '700 11px Oxanium, -apple-system, sans-serif';
+      ctx.fillStyle = col;
+      ctx.fillText(angDeg.toFixed(0) + '\u00b0', c1, py + 56);
+      ctx.fillText(Math.round(spd), c2, py + 56);
+      ctx.fillText(Math.round(thrF * 100) + '%', c3, py + 56);
+      ctx.restore();
     }
   }
   // pad strobes (danger register)
@@ -3938,6 +3994,36 @@ function draw() {
   }
   // the hangar: remaining ships, bottom-left
   // earned ships in transit (lifeZips) don't dock until their comet arrives (D-adr-042)
+  // C13 (Mike): a real OPEN-AIR hangar around the flight line — fixed 10-bay canopy
+  // (structure shows capacity; docked ships fill it). Ships keep their exact
+  // coords so lifeZip fly-ins land unchanged. Flat strokes/fills only (C7 rule).
+  {
+    const hx0 = 12, hx1 = 26 + (MAX_LIVES - 1) * 18 + 12, hyR = 716, hyG = 752;
+    ctx.save();
+    ctx.fillStyle = 'rgba(38,45,56,0.9)';                    // apron slab
+    ctx.fillRect(hx0, hyG, hx1 - hx0, 3);
+    ctx.fillStyle = 'rgba(74,85,99,0.7)';                    // bay pads
+    for (let i = 0; i < MAX_LIVES; i++) ctx.fillRect(26 + i * 18 - 6, hyG - 1, 12, 1.5);
+    ctx.fillStyle = '#39434f';                               // canopy roof + overhang
+    ctx.fillRect(hx0 - 3, hyR, hx1 - hx0 + 6, 4);
+    ctx.fillStyle = '#4a5563';                               // lit fascia edge
+    ctx.fillRect(hx0 - 3, hyR, hx1 - hx0 + 6, 1);
+    ctx.fillStyle = 'rgba(126,240,255,0.16)';                // under-roof light strip
+    ctx.fillRect(hx0 + 3, hyR + 4, hx1 - hx0 - 6, 1);
+    ctx.strokeStyle = '#3c4654'; ctx.lineWidth = 2;          // support columns
+    for (const cxp of [hx0, (hx0 + hx1) / 2, hx1]) {
+      ctx.beginPath(); ctx.moveTo(cxp, hyR + 4); ctx.lineTo(cxp, hyG); ctx.stroke();
+    }
+    ctx.lineWidth = 1;                                       // column braces
+    ctx.beginPath();
+    ctx.moveTo(hx0, hyR + 10); ctx.lineTo(hx0 + 7, hyR + 4);
+    ctx.moveTo(hx1, hyR + 10); ctx.lineTo(hx1 - 7, hyR + 4);
+    ctx.stroke();
+    ctx.globalAlpha = Math.sin(now * 3 + 1.7) > 0.2 ? 0.9 : 0.15;   // roof beacon
+    ctx.fillStyle = '#ffd166';
+    ctx.beginPath(); ctx.arc(hx1 + 2, hyR - 2, 1.3, 0, 7); ctx.fill();
+    ctx.restore();
+  }
   const nShips = Math.max(Math.min(game.lives, MAX_LIVES) - game.lifeZips.length, 0);
   // NB: now is SECONDS in draw(); lifePunchAt is performance.now() ms — use ms here
   const lifePulse = Math.max(0, 1 - (performance.now() - (game.lifePunchAt || -1e9)) / 450);  // 0..1 fade after a ship docks
