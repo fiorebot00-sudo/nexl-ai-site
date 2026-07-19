@@ -86,12 +86,16 @@ const A_CAP = 2000;               // max acceleration (units/s^2)
 const BOUNDS = { x0: -60, x1: VW + 60, y0: -80, y1: VH + 80 };
 const ASSIST_MARGIN = 26;         // pass within planet r + this = slingshot assist
 
-// ---------- ?fx look dials (Phase 1 depth group, D-adr-049) ----------
-// Presentation only — physics/determinism untouched. LOOK.on rides the same
-// ?fx opt-in as the bloom overlay; the fx meter tap toggles both for A/B.
+// ---------- look dials (Phase 1, D-adr-049; DEFAULT-ON since D-adr-050) ----------
+// Presentation only — physics/determinism untouched. The whole look layer +
+// bloom overlay now ship ON for everyone. ?fx=0 is the kill switch (A/B or
+// troubleshooting); bare ?fx still summons the dev meter, whose tap toggles
+// look+bloom together. Root cause of the flip: the old ?fx opt-in kept getting
+// silently lost (exitDaily's replaceState + daily share links drop the query),
+// so the look "vanished" between sessions — default-on removes the fragility.
 const LOOK = {
-  on: /[?#&]fx/.test(location.href),
-  rev: 'C16',     // build tag: meter line 3 + quoted in chat after every deploy (Mike's cache check)
+  on: !/[?#&]fx=0/.test(location.href),
+  rev: 'D1',      // build tag: meter line 3 + quoted in chat after every deploy (Mike's cache check)
   // review-round defaults: deliberately bold so each dial is judgeable on a
   // phone, then dialed back to taste. Tuned values become the shipped ones.
   twinkle: 1,      // star brightness oscillation (0-1 of ±15%)
@@ -103,9 +107,9 @@ const LOOK = {
   heroStars: 1,    // hero-star treatment intensity (halo/spikes/core); URL &hs=
   shipScale: 1.15, // visual-only ship size multiplier (collision unchanged); URL &ss=
   plume: 2,        // launch plume magnitude (count/size/speed/kiss all scale); URL &lp=
-  // DEV CHEAT (evaluation builds): infinite ships under ?fx so Mike can play/tune
-  // without restarting. &inf=0 disables. MUST be stripped/gated before ?fx flips
-  // default-on for real players (D2 decision) — a cheat, not an effect.
+  // Infinite ships (hangar refill on death) — shipped to EVERYONE at default-on,
+  // Mike's call at D-adr-050 (was the dev cheat gating the D2 flip). Daily keeps
+  // its 3-ship budget for board integrity. &inf=0 opts out.
   inf: true,
   // ---------- per-feature toggles (all default ON under ?fx) ----------
   // Every discrete effect is individually switchable so Mike can A/B any one in
@@ -1224,8 +1228,9 @@ function endRun(byCrash, x, y, crashPi) {
   }
   game.state = 'dead';
   game.lives--;                       // a ship is lost; retry same system if any remain
-  // DEV CHEAT: infinite ships under ?fx (LOOK.inf) — the hangar refills so play/tuning
-  // never dead-ends. Streak/fail bookkeeping above stays honest; only survival is free.
+  // Infinite ships (LOOK.inf, everyone since D-adr-050) — the hangar refills so
+  // play never dead-ends. Streak/fail bookkeeping stays honest; only survival is
+  // free. Daily is exempt: its 3-ship budget is the challenge + board contract.
   if (LOOK.on && LOOK.inf && game.mode !== 'daily') game.lives = Math.max(game.lives, START_LIVES);
   game.escapeStreak = 0;              // losing a ship breaks the perfect-run streak (D-adr-025)
   game.sysFails = (game.sysFails || 0) + 1;   // fails on THIS system (drives the hint, D-adr-032)
@@ -4710,23 +4715,25 @@ if (document.fonts && document.fonts.load) {
 }
 requestAnimationFrame(frame);
 
-// ---------- ?fx spike v2: WebGL bloom overlay over the untouched 2D frame ----------
+// ---------- WebGL bloom overlay over the untouched 2D frame (default-on, D-adr-050) ----------
 // The 2D canvas keeps rendering as shipped and STAYS VISIBLE as the base layer.
-// With ?fx, each frame is downsampled to quarter res on a scratch 2D canvas,
+// Each frame is downsampled to quarter res on a scratch 2D canvas,
 // uploaded to a WebGL1 overlay (16x less data than the v1 full-res upload that
 // made iOS jerky), bright-passed + blurred there, and the resulting GLOW ONLY
 // is additively blended over the game via CSS plus-lighter (screen fallback).
 // The overlay backing store is quarter res too — a blurred glow upscales free.
 // pointer-events:none, so input still lands on the game canvas. Any init
-// failure removes the overlay: fallback is the vanilla game.
-// Meter (top-left) shows fps + per-frame downsample+upload cost; TAP to A/B.
+// failure removes the overlay: fallback is the vanilla game. ?fx=0 skips the
+// whole overlay; the dev meter (top-left, fps + downsample+upload cost, TAP to
+// A/B) only appears with an explicit bare ?fx — players never see it.
 let fxRender = null;
 (function initFX() {
-  if (!/[?#&]fx/.test(location.href)) return;
+  if (/[?#&]fx=0/.test(location.href)) return;
+  const dev = /[?#&]fx($|[^=])/.test(location.href);
   const meter = document.createElement('div');
   meter.style.cssText = 'position:fixed;top:64px;left:8px;z-index:9;font:11px ui-monospace,monospace;color:#8ef5ff;background:rgba(4,8,16,.6);padding:4px 8px;border-radius:5px;white-space:pre;user-select:none;-webkit-user-select:none';
   meter.textContent = 'FX: init…';
-  document.body.appendChild(meter);
+  if (dev) document.body.appendChild(meter);
   let gl, glc;
   const blend = (window.CSS && CSS.supports && CSS.supports('mix-blend-mode', 'plus-lighter')) ? 'plus-lighter' : 'screen';
   try {
@@ -4884,8 +4891,8 @@ window.GG = {
   flingSolution: () => { const s = game.sys.sol; fling(s.vx, s.vy); return s; },
   newRun,
 };
-if (window.GG_FX) window.GG.FX = window.GG_FX;   // ?fx bloom dials (on/strength/threshold/knee/scale)
-window.GG.LOOK = LOOK;                           // ?fx depth-group dials (twinkle/tint/parallax/wash/vignette)
+if (window.GG_FX) window.GG.FX = window.GG_FX;   // bloom dials (on/strength/threshold/knee/scale)
+window.GG.LOOK = LOOK;                           // look dials (twinkle/tint/parallax/wash/vignette)
 </script>
 </body>
 </html>
